@@ -77,7 +77,13 @@ jobs:
           # wiring read from `${{ vars.NEXT_PUBLIC_BASE_PATH }}` (a repo-level
           # CI variable that was never set), so assets shipped without the
           # prefix and the home page rendered un-Hydrated.
-          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+          #
+          # Use `github.repository.split('/')[1]` rather than
+          # `github.event.repository.name` because `github.event.repository`
+          # is only populated for events that carry a repo payload; on the
+          # Tuesday `schedule` cron it's effectively empty, which would
+          # silently re-introduce the same broken state.
+          NEXT_PUBLIC_BASE_PATH: /${{ github.repository.split('/')[1] }}
         run: npm run pipeline:emit
 
       # `next build` with `output: 'export'` writes the search home + about
@@ -88,8 +94,10 @@ jobs:
         env:
           # Same as above: keep basePath in sync with the GitHub Pages
           # project-site subpath so Next's client bundle, CSS chunk URLs,
-          # and image references all resolve.
-          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+          # and image references all resolve. See the longer comment on
+          # the `Emit drug detail pages` step for why we don't read from
+          # `github.event.repository.name` (unreliable on schedule events).
+          NEXT_PUBLIC_BASE_PATH: /${{ github.repository.split('/')[1] }}
         run: npm run build
 
       # Merge the emitter's out-static/ into out/ so both producers land in
