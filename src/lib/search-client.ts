@@ -3,15 +3,6 @@
 import MiniSearch from 'minisearch';
 import type { SearchCompanionRow } from '@pipeline/types';
 
-// SENTINEL_v_MEDSEARCH_BUST_2026_07_08 — if the deployed bundle does NOT
-// contain this exact string, the source on origin/main is not matching
-// what `next build` is compiling. We deliberately keep this AFTER all
-// import statements so the ESM hoist rules don't trip a parse error.
-if (typeof window !== 'undefined') {
-  // eslint-disable-next-line no-console
-  console.warn('SENTINEL_v_MEDSEARCH_BUST_2026_07_08 — search-client module loaded in browser');
-}
-
 /** Public shape of a search result row. */
 export interface SearchHit {
   id: string;
@@ -42,18 +33,27 @@ interface SearchInputDoc {
 let STATE: SearchState | null = null;
 let LOAD_PROMISE: Promise<SearchState> | null = null;
 
-// Hardcoded project-site base path (kept in sync with `next.config.mjs`'s
-// `basePath` setting and `.github/workflows/refresh.yml`, both of which
-// set /medsearch as the project-site subpath). We deliberately do NOT
-// read `process.env.NEXT_PUBLIC_BASE_PATH` here: Next.js's static export
-// evaluates module-level constants during the build's SSR pre-pass, and
-// the previous runtime-detection IIFE kept getting webpack-folded to ''
-// because at that point `typeof window === 'undefined'` and the fallback
-// resolved to the (sometimes-empty) inline env var. A literal string
-// can't be folded away and matches the path Next.js's own asset handler
-// emits under the same basePath config — so the search data fetch lands
-// on /medsearch/data/search-index.json end-to-end.
-const BASE_PATH = '/medsearch';
+// Project-site base path = '/medsearch'. We deliberately encode the
+// string as base64 and decode at runtime rather than declaring a
+// literal `'/medsearch'` constant: Next.js's static-export SWC
+// compiler is configured with `basePath: '/medsearch'` and recognises
+// that exact string inside absolute-path literals, stripping it from
+// emitted JS to avoid double-prefixing at runtime. The flip side is
+// that fetch URLs like `/medsearch/data/search-index.json` lose the
+// `/medsearch/` prefix and end up emitted as bare `/data/...` and 404
+// against the project-site subpath. Decoding base64 (`atob`) can't be
+// folded by SWC because it's an opaque function call, so the literal
+// `/medsearch` never appears bare.
+//
+// Base64 of "/medsearch" = "L21lZHNlYXJjaA==" (verified with:
+//   node -e 'console.log(Buffer.from("/medsearch").toString("base64"))')
+//
+// `'use client'` modules run twice in the Next.js build: once during
+// SSR pre-render on Node (where `atob` is global in Node ≥ 16 — safe
+// for our GH Actions workflow which pins Node 22), and once in the
+// browser on hydration. In both environments `atob('L21lZHNlYXJjaA==')`
+// returns `'/medsearch'`.
+const BASE_PATH = atob('L21lZHNlYXJjaA==');
 
 /**
  * Lazy-load the search index + companion data on first call. Returns the
