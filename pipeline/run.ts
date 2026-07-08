@@ -23,6 +23,7 @@ import {
   fetchRdpXlsx,
   fetchSaListHtml,
   parseSaListRows,
+  withRetry,
 } from './sources.js';
 import { streamActiveBuckets, bucketsToDrugs } from './parse.js';
 import { applyLcaRdpEnrichment, buildLcaRdpEnrichment } from './enrich-lca-rdp.js';
@@ -44,11 +45,17 @@ const LCA_LANDING = 'https://www2.gov.bc.ca/gov/content/health/practitioner-prof
 const SA_LIST_URL = 'https://www2.gov.bc.ca/gov/content/health/practitioner-professional-resources/pharmacare/programs/special-authority/sa-drug-list';
 
 async function findFirstXlsxUrl(landing: string, kind: 'lca' | 'rdp'): Promise<string> {
-  const res = await fetch(landing, {
-    headers: { 'user-agent': 'MedSearch/0.1 (+https://github.com/buffy/medsearch)' },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch LCA/RDP landing page: ${res.status}`);
-  const html = await res.text();
+  // Only the network fetch is retry-eligible — the regex runs over the
+  // downloaded bytes and a `Could not find …` throw there is a layout
+  // change, not a transient outage. Retrying it would only burn CI
+  // budget and silently mask a real regression.
+  const html = await withRetry(async () => {
+    const res = await fetch(landing, {
+      headers: { 'user-agent': 'MedSearch/0.1 (+https://github.com/buffy/medsearch)' },
+    });
+    if (!res.ok) throw new Error(`Failed to fetch LCA/RDP landing page: ${res.status}`);
+    return res.text();
+  }, `fetch ${kind} landing`);
   const re = new RegExp(`href="([^"]*${kind}_current[^"]*\\.xlsx?)"`, 'i');
   const m = re.exec(html);
   if (!m) throw new Error(`Could not find ${kind} xlsx URL on landing page`);

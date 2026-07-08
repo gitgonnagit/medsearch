@@ -16,19 +16,54 @@ import { pipeline as streamPipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import yauzl from 'yauzl';
 
+/**
+ * Generic wrapper that retries a thunk on any throw, with bounded linear
+ * backoff. Used to absorb transient errors from the BC government CDN
+ * (UND_ERR_SOCKET, ECONNRESET, mid-stream TCP drops, flaky 5xx) without
+ * rewriting every call site.
+ *
+ *   - maxRetries = 3 → 4 total attempts; worst-case delay = 2 + 4 + 6 = 12s
+ *     (negligible against the 90-min job timeout in CI).
+ *   - Errors that retry vs. immediately bubble: every throw from the
+ *     operation. We don't filter by status code because, in this pipeline,
+ *     any non-OK is a terminal defect and a few extra seconds is cheap.
+ *   - Each attempt re-allocates streams / re-creates the file, so retries
+ *     are idempotent: `createWriteStream(dest)` truncates any partial bytes
+ *     left by a previous failure.
+ */
+export async function withRetry<T>(operation: () => Promise<T>, tag: string, maxRetries = 3): Promise<T> {
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    try {
+      return await operation();
+    } catch (err: unknown) {
+      if (attempt > maxRetries) throw err;
+      const delayMs = attempt * 2000; // 2s, 4s, 6s
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[retry] ${tag} failed (${message}). Retrying in ${delayMs}ms (attempt ${attempt}/${maxRetries})…`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw new Error('Unreachable');
+}
+
 async function downloadTo(url: string, dest: string): Promise<void> {
   mkdirSync(dirname(dest), { recursive: true });
-  const res = await fetch(url, {
-    redirect: 'follow',
-    headers: { 'user-agent': 'MedSearch/0.1 (+https://github.com/buffy/medsearch)' },
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to download ${url}: ${res.status} ${res.statusText}`);
-  }
-  if (!res.body) {
-    throw new Error(`No body for ${url}`);
-  }
-  await streamPipeline(Readable.fromWeb(res.body as any), createWriteStream(dest));
+  // withRetry covers both the initial fetch (UND_ERR_SOCKET observed in
+  // GH Actions on gov.bc.ca) and any mid-stream TCP drop during the body
+  // pipeline.
+  await withRetry(async () => {
+    const res = await fetch(url, {
+      redirect: 'follow',
+      headers: { 'user-agent': 'MedSearch/0.1 (+https://github.com/buffy/medsearch)' },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to download ${url}: ${res.status} ${res.statusText}`);
+    }
+    if (!res.body) {
+      throw new Error(`No body for ${url}`);
+    }
+    await streamPipeline(Readable.fromWeb(res.body as any), createWriteStream(dest));
+  }, `downloadTo ${url}`);
 }
 
 /**
