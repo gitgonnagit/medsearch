@@ -8,13 +8,13 @@ on:
   # Allow manual triggers (workflow_dispatch) for testing the full loop.
   workflow_dispatch:
 
-# `actions/deploy-pages@v4` requires `pages: write` + `id-token: write`
-# for the OIDC-based Pages deployment token. `contents: read` keeps the
-# checkout step narrow.
+# `JamesIves/github-pages-deploy-action@v4` pushes the `out/` directory
+# directly to the `gh-pages` branch, where Pages serves it natively.
+# This sidesteps the `actions/deploy-pages@v4` Artifact API, which
+# rejected our 694 MB / 121k-entry artifact with the generic
+# "hard links / symlinks / size" error on the free tier.
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 # Only one deployment per schedule slot — guard against overlapping runs.
 concurrency:
@@ -79,16 +79,23 @@ jobs:
           ls out/drug | head -3
           du -sh out
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: out
+      # Disable GitHub Pages' built-in Jekyll processing — without this
+      # Pages will try to walk all 60,734 drug HTMLs through the Ruby
+      # Jekyll pipeline and OOM at deploy time.
+      - name: Add .nojekyll marker
+        run: touch out/.nojekyll
 
+      # Push `out/` directly to the `gh-pages` branch. Pages then serves
+      # it natively. Git handles tens of thousands of files efficiently
+      # via tree objects, so this avoids the artifact API's per-file
+      # extraction timeout.
       - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v4
-        id: deployment
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          # Use repository name as the project path on GitHub Pages:
-          # <owner>.github.io/<repo>.
           token: ${{ secrets.GITHUB_TOKEN }}
-          artifact_name: github-pages
+          branch: gh-pages
+          folder: out
+          clean: true
+          single-commit: true
+          git_config_name: medsearch-bot
+          git_config_email: medsearch-bot@users.noreply.github.com
