@@ -245,10 +245,15 @@ export function canonicalizeDosageForm(raw: string | null): CanonicalDosageForm 
 /** Result of evaluating per-plan costs for one drug and picking the
  *  cheapest daily cost. Used by the detail page's "Patient Pays" callout. */
 export interface CostBreakdown {
-  /** Cheapest source plan (smallest `maxPrice × unitsPerDay`). */
+  /** Cheapest source plan (smallest `displayPrice × unitsPerDay`,
+   *  using PlanCoverage.displayPrice so RDP- and LCA-adjusted
+   *  reimbursement costs surface correctly on Limited Use drugs whose
+   *  raw `maxPrice` is null). The field is named `unitPrice` to avoid
+   *  the spec's literal "maxPrice" wording tripping future readers
+   *  into thinking it bypasses RDP/LCA adjustments. */
   source: {
     plan: string;
-    maxPrice: number;
+    unitPrice: number;
     unitsPerDay: number;
     costPerDay: number;
   } | null;
@@ -282,11 +287,20 @@ const DEFAULT_UNITS_PER_DAY = 1;
  * computes 30/90-day patient-share totals using a flat 30% post-
  * deductible rate (matching the user's mental model of "70% / 30%").
  *
- * Filter: a plan is a candidate iff `maxPrice` is positive. We do NOT
- * require `maxDailyQty` to be set — when it's null or 0 we use
+ * Uses `PlanCoverage.displayPrice` (not raw `maxPrice`) because
+ * `displayPrice` is the post-RDP/LCA-adjusted reimbursement price
+ * already shown in the user's coverage table. Limited Use drugs whose
+ * raw `maxPrice` is null have a non-null `displayPrice` (from the
+ * RDP/LCA reference price via `derivePlanCoverage`), so using
+ * `displayPrice` is what makes the callout render for SA / RDP drugs
+ * rather than blankly disappearing on them.
+ *
+ * Filter: a plan is a candidate iff `displayPrice` is positive. We
+ * do NOT require `maxDailyQty` to be set — when it's null or 0 we use
  * `DEFAULT_UNITS_PER_DAY` (1) per the comment above. Returns
- * `source: null` only when no plan has a usable price, so the callout
- * still skips in the (rare) case where every plan's price is null.
+ * `source: null` only when no plan has a usable displayed price, so
+ * the callout still skips in the (rare) case where every plan's
+ * price was null after RDP/LCA adjustment.
  *
  * `unitDisclosure` fires only when the raw `maxDailyQty === 1` AND
  * the form matches a unit-dose route — i.e. when the source
@@ -299,7 +313,9 @@ export function computeCostBreakdown(
   plans: PlanCoverage[],
   dosageForm: string | null,
 ): CostBreakdown {
-  const candidates = plans.filter((p) => p.maxPrice != null && p.maxPrice > 0);
+  const candidates = plans.filter(
+    (p) => p.displayPrice != null && p.displayPrice > 0,
+  );
   if (candidates.length === 0) {
     return {
       source: null,
@@ -310,19 +326,19 @@ export function computeCostBreakdown(
       unitDisclosure: null,
     };
   }
-  // Pick smallest costPerDay (= maxPrice × unitsPerDay) across plans.
-  // `unitsPerDayFor(p)` is the raw qty when positive, otherwise the
-  // DEFAULT_UNITS_PER_DAY fallback. We treat literal 0 the same as
-  // missing/null: PDDF rows where the source listed “no daily cap”
+  // Pick smallest costPerDay (= displayPrice × unitsPerDay) across
+  // plans. `unitsPerDayFor(p)` is the raw qty when positive, otherwise
+  // the DEFAULT_UNITS_PER_DAY fallback. We treat literal 0 the same as
+  // missing/null: PDDF rows where the source listed "no daily cap"
   // sometimes ship as `0` rather than blank, and `??` would silently
   // surface that as a real budget.
   const unitsPerDayFor = (p: PlanCoverage): number =>
     p.maxDailyQty != null && p.maxDailyQty > 0 ? p.maxDailyQty : DEFAULT_UNITS_PER_DAY;
   const cheapest = candidates.reduce((a, b) =>
-    a.maxPrice! * unitsPerDayFor(a) <= b.maxPrice! * unitsPerDayFor(b) ? a : b,
+    a.displayPrice! * unitsPerDayFor(a) <= b.displayPrice! * unitsPerDayFor(b) ? a : b,
   );
   const unitsPerDay = unitsPerDayFor(cheapest);
-  const costPerDay = cheapest.maxPrice! * unitsPerDay;
+  const costPerDay = cheapest.displayPrice! * unitsPerDay;
   const fullMonthly = costPerDay * 30 + DISPENSING_FEE;
   const fullThreeMonth = costPerDay * 90 + DISPENSING_FEE;
   const patientMonthly = fullMonthly * PATIENT_SHARE;
@@ -346,7 +362,7 @@ export function computeCostBreakdown(
   return {
     source: {
       plan: cheapest.plan,
-      maxPrice: cheapest.maxPrice!,
+      unitPrice: cheapest.displayPrice!,
       unitsPerDay,
       costPerDay,
     },

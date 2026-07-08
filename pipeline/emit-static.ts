@@ -268,7 +268,7 @@ function renderCostCallout(d: Drug): string {
         </div>
       </div>
       <div class="cost-callout__reference">
-        Cheapest source plan <strong>${source.plan}</strong>: ${fmtCurrency(source.maxPrice)} per unit
+        Cheapest source plan <strong>${source.plan}</strong>: ${fmtCurrency(source.unitPrice)} per unit
         × ${source.unitsPerDay} unit/day = ${fmtCurrency(source.costPerDay)} per day.
         Reference full cost: ${fmtCurrency(fullMonthly!)} per month ($11 dispensing fee)
         and ${fmtCurrency(fullThreeMonth!)} per 3 months; the 30% above is what the patient pays
