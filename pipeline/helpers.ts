@@ -29,7 +29,7 @@ const SALT_SUFFIXES = [
 ];
 
 /** Strength token patterns (mg, mcg, %, etc.) used to strip strength from names. */
-const STRENGTH_TOKEN = /\b\d+(\.\d+)?\s*(mg|mcg|µg|g|ml|mL|iu|%|u|units?|mmol)\/?(kg|m[\^]?2)?\b/gi;
+const STRENGTH_TOKEN = /\b\d+(\.\d+)?\s*(mg|mcg|µg|g|ml|mL|iu|%|u|units?|mmol)\/?(kg|m\^?2)?\b/gi;
 
 /** Parse a BC PharmaCare date string ("MM/DD/YYYY" or ISO). Returns YYYY-MM-DD or null. */
 export function parseDate(raw: unknown): string | null {
@@ -245,7 +245,7 @@ export function canonicalizeDosageForm(raw: string | null): CanonicalDosageForm 
 /** Result of evaluating per-plan costs for one drug and picking the
  *  cheapest daily cost. Used by the detail page's "Patient Pays" callout. */
 export interface CostBreakdown {
-  /** Cheapest source plan (smallest `maxPrice × maxDailyQty`). */
+  /** Cheapest source plan (smallest `maxPrice × unitsPerDay`). */
   source: {
     plan: string;
     maxPrice: number;
@@ -268,31 +268,38 @@ export interface CostBreakdown {
 const DISPENSING_FEE = 11.0;
 const PATIENT_SHARE = 0.30;
 
+/** Default units-per-day assumption when the source `Max Daily Qty`
+ *  column is missing. 1/day is the canonical schedule for tablets,
+ *  capsules, and most oral solids on BC PharmaCare schedules; combined
+ *  with `unitDisclosure` (which only fires when raw data says 1 AND
+ *  the form is unit-dose), this is conservative when the column is
+ *  absent (it never overstates cost) and corrected upward when the
+ *  raw value is higher. */
+const DEFAULT_UNITS_PER_DAY = 1;
+
 /**
  * Returns the cheapest daily cost across the drug's active plans and
  * computes 30/90-day patient-share totals using a flat 30% post-
  * deductible rate (matching the user's mental model of "70% / 30%").
  *
- * Filters to plans where both `maxPrice` and `maxDailyQty` are non-null
- * and positive. Returns `source: null` when no plan qualifies — the
- * renderer uses that signal to skip the callout entirely.
+ * Filter: a plan is a candidate iff `maxPrice` is positive. We do NOT
+ * require `maxDailyQty` to be set — when it's null or 0 we use
+ * `DEFAULT_UNITS_PER_DAY` (1) per the comment above. Returns
+ * `source: null` only when no plan has a usable price, so the callout
+ * still skips in the (rare) case where every plan's price is null.
  *
- * `unitDisclosure` fires only when `unitsPerDay === 1` AND the raw
- * `dosageForm` matches a unit-dose route (injection / solution /
- * suspension / patch / inhaler / spray / vial / etc.). For per-tablet
- * or per-capsule schedules it's suppressed because "1 tablet/day"
- * isn't surprising on its own; the line would just be clutter.
+ * `unitDisclosure` fires only when the raw `maxDailyQty === 1` AND
+ * the form matches a unit-dose route — i.e. when the source
+ * explicitly confirms it's unit-dose, not when the fallback guessed
+ * 1. For per-tablet or per-capsule schedules it's also suppressed,
+ * because "1 tablet/day" isn't surprising on its own and would just
+ * be clutter on the dominant oral-solid case.
  */
 export function computeCostBreakdown(
   plans: PlanCoverage[],
   dosageForm: string | null,
 ): CostBreakdown {
-  const candidates = plans.filter(
-    (p) =>
-      p.maxPrice != null &&
-      p.maxDailyQty != null &&
-      p.maxDailyQty > 0,
-  );
+  const candidates = plans.filter((p) => p.maxPrice != null && p.maxPrice > 0);
   if (candidates.length === 0) {
     return {
       source: null,
@@ -303,17 +310,30 @@ export function computeCostBreakdown(
       unitDisclosure: null,
     };
   }
-  // Pick smallest costPerDay (= maxPrice × maxDailyQty) across plans.
+  // Pick smallest costPerDay (= maxPrice × unitsPerDay) across plans.
+  // `unitsPerDayFor(p)` is the raw qty when positive, otherwise the
+  // DEFAULT_UNITS_PER_DAY fallback. We treat literal 0 the same as
+  // missing/null: PDDF rows where the source listed “no daily cap”
+  // sometimes ship as `0` rather than blank, and `??` would silently
+  // surface that as a real budget.
+  const unitsPerDayFor = (p: PlanCoverage): number =>
+    p.maxDailyQty != null && p.maxDailyQty > 0 ? p.maxDailyQty : DEFAULT_UNITS_PER_DAY;
   const cheapest = candidates.reduce((a, b) =>
-    (a.maxPrice! * a.maxDailyQty!) <= (b.maxPrice! * b.maxDailyQty!) ? a : b,
+    a.maxPrice! * unitsPerDayFor(a) <= b.maxPrice! * unitsPerDayFor(b) ? a : b,
   );
-  const costPerDay = cheapest.maxPrice! * cheapest.maxDailyQty!;
+  const unitsPerDay = unitsPerDayFor(cheapest);
+  const costPerDay = cheapest.maxPrice! * unitsPerDay;
   const fullMonthly = costPerDay * 30 + DISPENSING_FEE;
   const fullThreeMonth = costPerDay * 90 + DISPENSING_FEE;
   const patientMonthly = fullMonthly * PATIENT_SHARE;
   const patientThreeMonth = fullThreeMonth * PATIENT_SHARE;
 
   const form = (dosageForm ?? '').toLowerCase();
+  // Only disclose unit-dose when the source explicitly confirms
+  // raw maxDailyQty === 1. The fallback (maxDailyQty = null) would
+  // mistakenly surface "1 unit" claims on drugs whose schedule is
+  // actually multi-dose, so we gate on the raw value, not on the
+  // post-fallback `unitsPerDay` we feed into the math.
   const isUnitDoseForm =
     cheapest.maxDailyQty === 1 &&
     /\b(injection|solution|suspension|syrup|elixir|patch|inhaler|spray|vial|ampul|ampoule|nebulizer|drop|sachet|enema)\b/.test(
@@ -327,7 +347,7 @@ export function computeCostBreakdown(
     source: {
       plan: cheapest.plan,
       maxPrice: cheapest.maxPrice!,
-      unitsPerDay: cheapest.maxDailyQty!,
+      unitsPerDay,
       costPerDay,
     },
     fullMonthly,
