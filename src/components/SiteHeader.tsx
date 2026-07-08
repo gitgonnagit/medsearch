@@ -3,13 +3,18 @@ import Link from 'next/link';
 /**
  * Site header. Sticky, blurred, with a simple geometric pill-in-circle logo
  * drawn inline (no asset fetches) so it always renders on first paint.
+ *
+ * Link hrefs are written WITHOUT a `${base}/` prefix because Next.js's
+ * `basePath` config (set in `next.config.mjs`) automatically prepends the
+ * project-site subpath at render time. Previously we did
+ * `<Link href={`${base}/`}>` AND relied on `basePath`, which produced
+ * `/medsearch/medsearch/` after page render.
  */
 export default function SiteHeader() {
-  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
   return (
     <header className="site-header">
       <div className="container site-header__inner">
-        <Link href={`${base}/`} className="site-header__brand">
+        <Link href="/" className="site-header__brand">
           <svg
             className="site-header__logo"
             viewBox="0 0 24 24"
@@ -24,8 +29,8 @@ export default function SiteHeader() {
           <span>MedSearch</span>
         </Link>
         <nav className="site-header__nav" aria-label="Primary">
-          <Link href={`${base}/`}>Search</Link>
-          <Link href={`${base}/about/`}>About</Link>
+          <Link href="/">Search</Link>
+          <Link href="/about/">About</Link>
         </nav>
       </div>
     </header>

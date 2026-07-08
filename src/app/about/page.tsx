@@ -25,7 +25,6 @@ async function loadMeta(): Promise<SiteMeta | null> {
 
 export default async function AboutPage() {
   const meta = await loadMeta();
-  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
   return (
     <article className="container about">
       <h1>About MedSearch</h1>
@@ -154,7 +153,7 @@ export default async function AboutPage() {
       )}
 
       <p>
-        <Link href={`${base}/`}>&larr; Back to search</Link>
+        <Link href="/">&larr; Back to search</Link>
       </p>
     </article>
   );

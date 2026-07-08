@@ -66,8 +66,6 @@ export default function SearchBox() {
     else setHits([]);
   };
 
-  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
-
   return (
     <div>
       <div className="search-box" role="search">
@@ -131,7 +129,7 @@ export default function SearchBox() {
           {hits.map((h) => (
             <Link
               key={h.id}
-              href={`${base}/drug/${encodeURIComponent(h.id)}/`}
+              href={`/drug/${encodeURIComponent(h.id)}/`}
               className="result"
               prefetch={false}
             >

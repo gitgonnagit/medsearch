@@ -33,20 +33,18 @@ interface SearchInputDoc {
 let STATE: SearchState | null = null;
 let LOAD_PROMISE: Promise<SearchState> | null = null;
 
-// Module-level base path that works regardless of whether Next's
-// `NEXT_PUBLIC_*` inlining pass picked up our env var. Reads the env var
-// first (so the build-time value wins if Next did inline it), then
-// auto-detects from `window.location.pathname` (the first path segment
-// after the host) so the same client bundle works for project sites
-// like `${owner}.github.io/${repo}/` even when CI never set the env.
-// Falls back to '' for owner-page hosting (`<owner>.github.io`).
-const BASE_PATH: string = (() => {
-  if (typeof window !== 'undefined') {
-    const seg = window.location.pathname.split('/').filter(Boolean)[0];
-    if (seg) return '/' + seg;
-  }
-  return process.env.NEXT_PUBLIC_BASE_PATH ?? '';
-})();
+// Hardcoded project-site base path (kept in sync with `next.config.mjs`'s
+// `basePath` setting and `.github/workflows/refresh.yml`, both of which
+// set /medsearch as the project-site subpath). We deliberately do NOT
+// read `process.env.NEXT_PUBLIC_BASE_PATH` here: Next.js's static export
+// evaluates module-level constants during the build's SSR pre-pass, and
+// the previous runtime-detection IIFE kept getting webpack-folded to ''
+// because at that point `typeof window === 'undefined'` and the fallback
+// resolved to the (sometimes-empty) inline env var. A literal string
+// can't be folded away and matches the path Next.js's own asset handler
+// emits under the same basePath config — so the search data fetch lands
+// on /medsearch/data/search-index.json end-to-end.
+const BASE_PATH = '/medsearch';
 
 /**
  * Lazy-load the search index + companion data on first call. Returns the
@@ -59,15 +57,13 @@ export function ensureSearchLoaded(): Promise<SearchState> {
   if (STATE && STATE.ready) return Promise.resolve(STATE);
   if (LOAD_PROMISE) return LOAD_PROMISE;
   LOAD_PROMISE = (async () => {
-    // BASE_PATH is computed at module-load (see top of file). We don't
-    // re-compute it on every search call.
-    const base = BASE_PATH;
+    // BASE_PATH is module-scope (always '/medsearch' for this site).
     const [indexJson, companion]: [string, SearchCompanionRow[]] = await Promise.all([
-      fetch(`${base}/data/search-index.json`).then((r) => {
+      fetch(`${BASE_PATH}/data/search-index.json`).then((r) => {
         if (!r.ok) throw new Error(`search-index.json: ${r.status}`);
         return r.text();
       }),
-      fetch(`${base}/data/related.json`).then((r) => {
+      fetch(`${BASE_PATH}/data/related.json`).then((r) => {
         if (!r.ok) throw new Error(`related.json: ${r.status}`);
         return r.json() as Promise<SearchCompanionRow[]>;
       }),
