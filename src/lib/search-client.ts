@@ -3,6 +3,15 @@
 import MiniSearch from 'minisearch';
 import type { SearchCompanionRow } from '@pipeline/types';
 
+// SENTINEL_v_MEDSEARCH_BUST_2026_07_08 — if the deployed bundle does NOT
+// contain this exact string, the source on origin/main is not matching
+// what `next build` is compiling. We deliberately keep this AFTER all
+// import statements so the ESM hoist rules don't trip a parse error.
+if (typeof window !== 'undefined') {
+  // eslint-disable-next-line no-console
+  console.warn('SENTINEL_v_MEDSEARCH_BUST_2026_07_08 — search-client module loaded in browser');
+}
+
 /** Public shape of a search result row. */
 export interface SearchHit {
   id: string;
