@@ -1,0 +1,89 @@
+name: refresh
+
+on:
+  # Weekly, after the government's Tuesday-morning PDDF update.
+  # 18:00 UTC = 11:00 PDT / 10:00 PST, comfortably after the morning refresh.
+  schedule:
+    - cron: '0 18 * * 2'
+  # Allow manual triggers (workflow_dispatch) for testing the full loop.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only one deployment per schedule slot — guard against overlapping runs.
+concurrency:
+  group: refresh-deploy
+  cancel-in-progress: true
+
+jobs:
+  refresh-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run data pipeline
+        # No MEDSEARCH_AS_OF: scheduled runs have no commit context, and
+        # using `head_commit.timestamp` would resolve to empty. The pipeline
+        # defaults to "today" when the env var is unset, which is the
+        # correct behaviour for Tuesday-morning PDDF refreshes.
+        run: npm run pipeline
+
+      - name: Validate pipeline outputs
+        run: npm run pipeline:check
+
+      # The custom HTML emitter (`pipeline/emit-static.ts`) bypasses Next.js
+      # for /drug/[din]/*.html — Next.js would OOM/timeout on the free-tier
+      # runner rendering ~60k React pages. The emitter reads drugs.json and
+      # writes one self-contained index.html per DIN into ./out-static/.
+      - name: Emit drug detail pages
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ vars.NEXT_PUBLIC_BASE_PATH }}
+        run: npm run pipeline:emit
+
+      # `next build` with `output: 'export'` writes the search home + about
+      # (including `public/data/*` copied to `out/data/`) directly into the
+      # `out/` directory. The drug route is intentionally empty so Next.js
+      # skips it.
+      - name: Build Next.js site
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ vars.NEXT_PUBLIC_BASE_PATH }}
+        run: npm run build
+
+      # Merge the emitter's out-static/ into out/ so both producers land in
+      # the same GitHub Pages artifact.
+      - name: Merge static outputs
+        run: npm run build:merge
+
+      - name: Quick smoke test against the built index
+        run: |
+          test -f out/data/search-index.json
+          test -f out/data/related.json
+          test -f out/data/meta.json
+          test -f out/index.html
+          test -f out/medsearch.css
+          ls out/drug | head -3
+          du -sh out
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
+        id: deployment
+        with:
+          # Use repository name as the project path on GitHub Pages:
+          # <owner>.github.io/<repo>.
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifact_name: github-pages

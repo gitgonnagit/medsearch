@@ -1,0 +1,44 @@
+{
+  "name": "medsearch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MedSearch — fast BC PharmaCare drug lookup. Static site with weekly-refreshed client-side search.",
+  "type": "module",
+  "scripts": {
+    "pipeline": "tsx pipeline/run.ts",
+    "pipeline:check": "tsx pipeline/check.ts",
+    "pipeline:emit": "tsx pipeline/emit-static.ts",
+    "pipeline:all": "npm run pipeline && npm run pipeline:emit",
+    "dev": "next dev",
+    "build": "next build",
+    "build:with-data": "npm run pipeline:all && next build && npm run build:merge",
+    "build:merge": "node ./pipeline/merge-output.mjs",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "csv-parse": "^5.5.6",
+    "fuse.js": "^7.0.0",
+    "minisearch": "^7.1.0",
+    "next": "^15.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/yauzl": "^3.4.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

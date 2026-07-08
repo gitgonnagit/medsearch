@@ -1,0 +1,26 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+
+# generated datasets (built locally by the pipeline; rebuilt by CI)
+/data-cache/
+/public/data/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# misc
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# editor
+.idea/
+.vscode/
