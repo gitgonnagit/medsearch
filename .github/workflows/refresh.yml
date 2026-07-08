@@ -69,7 +69,15 @@ jobs:
       # it with the generic "no symlinks/hardlinks/<10GB" error.
       - name: Emit drug detail pages
         env:
-          NEXT_PUBLIC_BASE_PATH: ${{ vars.NEXT_PUBLIC_BASE_PATH }}
+          # The site lives at gitgonnagit.github.io/medsearch/ — a project
+          # page subpath under the owner's user site. Pin NEXT_PUBLIC_BASE_PATH
+          # so Next.js's `basePath` and the emitter's emitted hrefs both end
+          # up as /medsearch/_next/.../medsearch.css etc., instead of bare
+          # root paths that 404 against the project subpath. The previous
+          # wiring read from `${{ vars.NEXT_PUBLIC_BASE_PATH }}` (a repo-level
+          # CI variable that was never set), so assets shipped without the
+          # prefix and the home page rendered un-Hydrated.
+          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
         run: npm run pipeline:emit
 
       # `next build` with `output: 'export'` writes the search home + about
@@ -78,7 +86,10 @@ jobs:
       # skips it.
       - name: Build Next.js site
         env:
-          NEXT_PUBLIC_BASE_PATH: ${{ vars.NEXT_PUBLIC_BASE_PATH }}
+          # Same as above: keep basePath in sync with the GitHub Pages
+          # project-site subpath so Next's client bundle, CSS chunk URLs,
+          # and image references all resolve.
+          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
         run: npm run build
 
       # Merge the emitter's out-static/ into out/ so both producers land in
