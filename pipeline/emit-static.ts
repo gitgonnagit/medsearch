@@ -40,6 +40,17 @@ const CSS_FILENAME = 'medsearch.css';
 /** Min number of raw `await writeFile` workers (chunked parallel write). */
 const WRITE_CONCURRENCY = 64;
 
+/** Cap on related-drug cards rendered per detail page. Without this,
+ *  wide `genericGroupKey` buckets (e.g., 4,700+ rows from an "unknown
+ *  generic drug" placeholder all sharing the same genericName) inflate
+ *  the artifact from ~300 MB to ~12 GB, which `actions/deploy-pages@v4`
+ *  rejects on its 10 GB hard cap. Buckets larger than this render a
+ *  "(showing N of M)" hint in the section heading. Env-tunable via
+ *  MEDSEARCH_MAX_RELATED for CI smoke tests. */
+const MAX_RELATED_DRUGS = process.env.MEDSEARCH_MAX_RELATED
+  ? parseInt(process.env.MEDSEARCH_MAX_RELATED, 10)
+  : 24;
+
 async function loadDrugs(): Promise<Drug[]> {
   const path = join(DATA_DIR, 'drugs.json');
   if (!existsSync(path)) {
@@ -230,10 +241,27 @@ function renderRelatedDrugs(d: Drug, allDrugs: Drug[]): string {
   // Compute "related" drugs inline from the canonical list (instead of reading
   // a separate sidecar) so the emitter is the source of truth here.
   if (allDrugs.length === 0 || !d.genericGroupKey) return '';
-  const related = allDrugs.filter(
-    (x) => x.genericGroupKey === d.genericGroupKey && x.id !== d.id,
-  );
-  if (related.length === 0) return '';
+  // Sort the matching set so the visible N (where N = MAX_RELATED_DRUGS)
+  // are the most variationally different — not just the first N by
+  // parse.ts's alphabetical genericName encounter order, which is
+  // arbitrary within a same-generic bucket and unhelpful when a
+  // bucket spans several thousand rows (e.g. the "unknown generic drug"
+  // placeholder group). Comparator falls through to brandName for the
+  // common case where strength is null (covered by parse.ts's known
+  // limitation); a future change that populates `strength` will get the
+  // deterministic strength-driven order for free.
+  const allMatching = allDrugs
+    .filter((x) => x.genericGroupKey === d.genericGroupKey && x.id !== d.id)
+    .sort((a, b) => {
+      const s = (a.strength ?? '').localeCompare(b.strength ?? '');
+      if (s !== 0) return s;
+      return (a.brandName ?? '').localeCompare(b.brandName ?? '');
+    });
+  if (allMatching.length === 0) return '';
+  // Cap rendered rows; the rest get a (showing N of M) hint in the heading.
+  // See MAX_RELATED_DRUGS above for the size-bound rationale.
+  const related = allMatching.slice(0, MAX_RELATED_DRUGS);
+  const truncated = allMatching.length > related.length;
 
   const rows = related
     .map((r) => {
@@ -253,8 +281,12 @@ function renderRelatedDrugs(d: Drug, allDrugs: Drug[]): string {
     })
     .join('\n');
 
+  const suffix = truncated
+    ? ` <span class="text-muted text-small">(showing ${related.length} of ${allMatching.length})</span>`
+    : '';
+
   return `<section class="detail__section">
-  <h2 class="detail__section-title">Other drugs with the same generic name</h2>
+  <h2 class="detail__section-title">Other drugs with the same generic name${suffix}</h2>
   <div class="related-list">
     ${rows}
   </div>
