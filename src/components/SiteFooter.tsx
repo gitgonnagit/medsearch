@@ -6,7 +6,6 @@ import type { SiteMeta } from '@pipeline/types';
  * when available, surfaces the data freshness timestamp from `meta.json`.
  */
 export default function SiteFooter({ meta }: { meta: SiteMeta | null }) {
-  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
   const generatedHuman = meta?.generatedAt ? humanDate(meta.generatedAt) : 'unknown';
   const asOf = meta?.asOfDate ?? '';
   return (
@@ -29,7 +28,11 @@ export default function SiteFooter({ meta }: { meta: SiteMeta | null }) {
           patient&apos;s actual plan.
         </p>
         <p>
-          <Link href={`${base}/about/`}>Data sources &amp; methodology</Link>
+          {/* Plain `/about/` href — next.config.mjs basePath='/medsearch' is
+              prepended automatically by Next.js's <Link>.  Previously we did
+              <Link href={`${base}/about/`}> which double-prefixed to
+              /medsearch/medsearch/about/ on render. */}
+          <Link href="/about/">Data sources &amp; methodology</Link>
           {' · '}
           Not affiliated with the Government of British Columbia.
         </p>
