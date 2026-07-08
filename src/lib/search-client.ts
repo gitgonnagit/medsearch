@@ -133,7 +133,11 @@ export async function search(query: string, opts?: { limit?: number; canonicalDo
       brandName: (r['brandName'] as string | null) ?? null,
       genericName: String(r['genericName'] ?? ''),
       dosageForm: (r['dosageForm'] as string | null) ?? null,
-      canonicalDosageForm: (r['canonicalDosageForm'] as string | null) ?? null,
+      // `canonicalDosageForm` is NOT in MiniSearch.storeFields — it lives on
+      // the companion row only. Reading it from `r[...]` would silently
+      // return undefined, so the chip-filter would always see `null`
+      // and 0 matches. Pull from the companion lookup instead.
+      canonicalDosageForm: c?.canonicalDosageForm ?? null,
       manufacturer: (r['manufacturer'] as string | null) ?? null,
       isLimitedUse: c?.isLimitedUse ?? false,
       inLcaCategory: c?.inLcaCategory ?? false,
