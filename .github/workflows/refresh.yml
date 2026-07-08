@@ -25,6 +25,16 @@ jobs:
   refresh-and-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # Bind the deployment job to the `github-pages` environment so the
+    # OIDC token tied to actions/deploy-pages@v4 carries the
+    # environment claims the Pages backend expects. Without this binding
+    # the step reports success but the Pages service silently drops the
+    # payload — leaving `latest_status: null` and the URL on the GH 404
+    # stub. The `url` output re-emits the published URL to GHA logs.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     env:
       # Cap the emitted drug pages for free-tier GitHub Pages.
       # ~5,000 drugs × ~10 KB HTML ≈ 50 MB of detail pages; well inside
@@ -91,7 +101,17 @@ jobs:
         with:
           path: out
 
-      # GitHub Pages' dynamic pages-build-deployment workflow fires at the
-      # end of this run, picks up the `github-pages` artifact, and runs
-      # `actions/deploy-pages@v4` against the GitHub Pages service. That is
-      # the actual deploy step — we do not invoke it ourselves.
+      # The repo's Pages source is set to `build_type: workflow`, which
+      # disables GitHub's auto-managed `pages-build-deployment` workflow
+      # and expects *this* workflow to call `actions/deploy-pages` itself.
+      # The step reads the `github-pages` artifact (uploaded above) and
+      # pushes the result to the live URL via OIDC + pages: write. The
+      # matching `pages: write` + `id-token: write` permissions are set
+      # at the workflow-level above.
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifact_name: github-pages
+
