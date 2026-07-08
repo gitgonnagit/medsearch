@@ -33,6 +33,21 @@ interface SearchInputDoc {
 let STATE: SearchState | null = null;
 let LOAD_PROMISE: Promise<SearchState> | null = null;
 
+// Module-level base path that works regardless of whether Next's
+// `NEXT_PUBLIC_*` inlining pass picked up our env var. Reads the env var
+// first (so the build-time value wins if Next did inline it), then
+// auto-detects from `window.location.pathname` (the first path segment
+// after the host) so the same client bundle works for project sites
+// like `${owner}.github.io/${repo}/` even when CI never set the env.
+// Falls back to '' for owner-page hosting (`<owner>.github.io`).
+const BASE_PATH: string = (() => {
+  if (typeof window !== 'undefined') {
+    const seg = window.location.pathname.split('/').filter(Boolean)[0];
+    if (seg) return '/' + seg;
+  }
+  return process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+})();
+
 /**
  * Lazy-load the search index + companion data on first call. Returns the
  * already-loaded state on subsequent calls.
@@ -44,21 +59,9 @@ export function ensureSearchLoaded(): Promise<SearchState> {
   if (STATE && STATE.ready) return Promise.resolve(STATE);
   if (LOAD_PROMISE) return LOAD_PROMISE;
   LOAD_PROMISE = (async () => {
-    // Resolve the base path from the *runtime* URL rather than from a
-    // build-time env var alone: project sites live under
-    // `${owner}.github.io/${repo}/` and the build-time
-    // `process.env.NEXT_PUBLIC_BASE_PATH` historically lands empty when
-    // the CI env expression isn't picked up by Next's inlining
-    // pass. Auto-detecting from `window.location.pathname` (the first
-    // segment after the host — i.e. the repo name) is portable across
-    // any project-site deploy without re-wiring CI.
-    const base = (() => {
-      if (typeof window !== 'undefined') {
-        const seg = window.location.pathname.split('/').filter(Boolean)[0];
-        if (seg) return '/' + seg;
-      }
-      return process.env.NEXT_PUBLIC_BASE_PATH ?? '';
-    })();
+    // BASE_PATH is computed at module-load (see top of file). We don't
+    // re-compute it on every search call.
+    const base = BASE_PATH;
     const [indexJson, companion]: [string, SearchCompanionRow[]] = await Promise.all([
       fetch(`${base}/data/search-index.json`).then((r) => {
         if (!r.ok) throw new Error(`search-index.json: ${r.status}`);
