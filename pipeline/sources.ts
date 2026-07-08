@@ -24,9 +24,31 @@ import yauzl from 'yauzl';
  * that AbortSignal.timeout raises, and the `ABORT_ERR` AbortError from
  * fetch. HttpClient errors (4xx/5xx) are NOT transient — they're a problem
  * with the request, not the transport.
+ *
+ * NB: Node's native fetch() throws `new TypeError('fetch failed')` for
+ * every transport-level failure, wrapping the real undici error in
+ * `err.cause` (ConnectTimeoutError, UND_ERR_SOCKET, etc.). The thrown
+ * TypeError carries no `.code` and its `.name` is just "TypeError", so
+ * the code-name checks below wouldn't classify it as transient without
+ * help. We eagerly match the message text AND inspect `err.cause.name`
+ * (and `err.cause.code`) to make sure retry actually fires on the
+ * generic TypeError. Without this, the workflow dies on the first
+ * gov.bc.ca CDN hiccup because retries never trigger.
  */
-function isTransientNetworkError(err: unknown): boolean {
+/** Exported for tests in scripts/test-fetch-retry.mts; not part of the
+ *  wrapper public API. Defensive `err.name === 'TypeError'` is included
+ *  alongside the message check so future maintainers reading this know
+ *  it's the fetch()-specific wrapping behaviour we're matching against
+ *  (every Node fetch() transport failure throws `TypeError('fetch failed')`
+ *  with the real undici cause in `err.cause`). */
+export function isTransientNetworkError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  // Eager match: every fetch() transport failure has this message.
+  // (4xx/5xx don't throw fetch-failed — they return a valid Response.)
+  // The matching `err.name === 'TypeError'` makes the fetch origin
+  // explicit so a rethrow elsewhere can't accidentally flip us to
+  // retrying application errors that happen to share the phrase.
+  if (err.name === 'TypeError' && err.message === 'fetch failed') return true;
   const code = ((err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code ?? null);
   if (typeof code === 'string') {
     if (code.startsWith('UND_ERR_')) return true;
@@ -34,6 +56,17 @@ function isTransientNetworkError(err: unknown): boolean {
   }
   const name = (err as { name?: string }).name;
   if (name === 'TimeoutError' || name === 'AbortError') return true;
+  // The underlying undici error is wrapped in err.cause for fetch-failed.
+  // Inspect its name/code so retries fire on ConnectTimeoutError etc.
+  const cause = (err as { cause?: { name?: string; code?: string } }).cause;
+  if (cause) {
+    const causeName = cause.name;
+    if (causeName === 'TimeoutError' || causeName === 'AbortError' || causeName === 'ConnectTimeoutError') return true;
+    if (typeof cause.code === 'string') {
+      if (cause.code.startsWith('UND_ERR_')) return true;
+      if (['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EPIPE'].includes(cause.code)) return true;
+    }
+  }
   return false;
 }
 
@@ -81,8 +114,16 @@ export async function withRetry<T>(
         ?? (err as { cause?: { code?: string } }).cause?.code
         ?? (err as { name?: string }).name
         ?? '-';
+      // Surface the inner undici cause so a GHA run log shows the
+      // real reason for the retry (e.g. ConnectTimeoutError /
+      // UND_ERR_SOCKET) instead of a generic `TypeError: fetch failed`
+      // whose root is buried in err.cause.
+      const cause = (err as { cause?: { name?: string; message?: string; code?: string } }).cause;
+      const causeInfo = cause
+        ? ` cause=${cause.name ?? '?'} ${cause.code ?? '-'} ${(cause.message ?? '').slice(0, 60)}`
+        : '';
       console.warn(
-        `[retry] ${tag} transient ${code}. attempt ${attempt}/${maxRetries} → retrying in ${delayMs}ms (msg: ${message.slice(0, 80)})`,
+        `[retry] ${tag} transient ${code}. attempt ${attempt}/${maxRetries} → retrying in ${delayMs}ms (msg: ${message.slice(0, 80)}${causeInfo})`,
       );
       await new Promise((r) => setTimeout(r, delayMs));
     }
