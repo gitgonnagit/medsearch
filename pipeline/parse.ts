@@ -11,6 +11,7 @@ import { parse } from 'csv-parse';
 import type { Drug, PlanCoverage } from './types.js';
 import {
   asOfIso,
+  canonicalizeDosageForm,
   derivePlanCoverage,
   genericGroupKey,
   isActiveOn,
@@ -216,6 +217,7 @@ export function bucketsToDrugs(buckets: Map<string, Bucket>): Drug[] {
       inRdpCategory: plans.some((p) => p.rdpCategory != null),
       rdpCategory: null,
       hasGenericEquivalents: b.brandNamesSeen.size > 1,
+      canonicalDosageForm: canonicalizeDosageForm(primary?.dosageForm ?? null),
     });
   }
   drugs.sort((a, c) => a.genericName.localeCompare(c.genericName));

@@ -1,3 +1,5 @@
+import type { CanonicalDosageForm } from './helpers.js';
+
 /**
  * Shared types between the data pipeline and the frontend.
  *
@@ -84,6 +86,9 @@ export interface Drug {
   relatedDins: string[];
   /** Stable normalized group key (used for client-side grouping lookups). */
   genericGroupKey: string;
+  /** Bucket category for the raw `dosageForm`; one of the canonical 8 chips
+   * (e.g. "oral solid", "topical") or null if the raw form didn't bucket. */
+  canonicalDosageForm: CanonicalDosageForm | null;
   /** True if this drug is part of an LCA category in the source. */
   inLcaCategory: boolean;
   /** LCA category name, if any. */
@@ -101,7 +106,10 @@ export interface SearchCompanionRow {
   id: string;
   brandName: string | null;
   genericName: string;
+  /** Raw `dosageForm` string from PDDF — kept for display on the result row. */
   dosageForm: string | null;
+  /** Bucket category matching the chip strip on the home page. */
+  canonicalDosageForm: CanonicalDosageForm | null;
   manufacturer: string | null;
   isLimitedUse: boolean;
   inLcaCategory: boolean;

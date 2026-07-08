@@ -9,6 +9,7 @@
 import MiniSearch from 'minisearch';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { CANONICAL_DOSAGE_FORMS } from './helpers.js';
 import type { Drug, SearchCompanionRow, SiteMeta } from './types.js';
 
 export interface IndexBuildResult {
@@ -53,6 +54,7 @@ export async function buildSearchIndex(
     brandName: d.brandName,
     genericName: d.genericName,
     dosageForm: d.dosageForm,
+    canonicalDosageForm: d.canonicalDosageForm,
     manufacturer: d.manufacturer,
     isLimitedUse: d.isLimitedUse,
     inLcaCategory: d.inLcaCategory || d.lcaCategory != null,
@@ -89,6 +91,13 @@ export async function writeIndexArtifacts(
   await writeFile(
     join(publicDataDir, 'meta.json'),
     JSON.stringify(out.meta, null, 2),
+  );
+  // Single source of truth for the 8 canonical dosage-form categories. The
+  // frontend fetches this on load to populate the home-page chip strip —
+  // keeps frontend and pipeline reading the same labels.
+  await writeFile(
+    join(publicDataDir, 'canonical-dosage-forms.json'),
+    JSON.stringify(CANONICAL_DOSAGE_FORMS),
   );
   void dirname;
 }

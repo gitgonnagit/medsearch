@@ -139,3 +139,105 @@ export function derivePlanCoverage(input: {
   }
   return { label: 'Not covered', displayPrice: null };
 }
+
+/** Canonical dosage-form categories shown as filter chips on the search
+ * home page. The labelled set is the user's editorial choice — the
+ * pipeline maps the raw PDDF `Dosage Form` strings down to one of
+ * these via `canonicalizeDosageForm`. */
+export type CanonicalDosageForm =
+  | 'oral solid'
+  | 'oral liquid'
+  | 'rectal'
+  | 'injection'
+  | 'topical'
+  | 'inhaled'
+  | 'nasal'
+  | 'patch';
+
+/** Display order for the chip strip on the home page. */
+export const CANONICAL_DOSAGE_FORMS: readonly CanonicalDosageForm[] = [
+  'oral solid',
+  'oral liquid',
+  'injection',
+  'topical',
+  'inhaled',
+  'nasal',
+  'patch',
+  'rectal',
+];
+
+/**
+ * Bucket a raw PDDF `Dosage Form` string (e.g. "Tablet", "Inhalation
+ * Powder", "Ophthalmic Solution") into one of the canonical 8
+ * categories. Returns null for forms that don't fit any chip — those
+ * still render as raw text on the drug row UI but are not selectable
+ * on the home filter strip.
+ *
+ * Substring matching, intentionally simple: unknown names fall through
+ * to `null`. The mapping is conservative on combinations (e.g.
+ * "transdermal patch" → `patch` rather than `topical`). Order matters:
+ * `patch` is checked first so transdermal route doesn't fall into
+ * topical; `injection` is checked before the oral-liquid route so
+ * "Injection Solution" doesn't render as a drink.
+ */
+export function canonicalizeDosageForm(raw: string | null): CanonicalDosageForm | null {
+  if (!raw) return null;
+  const r = raw.toLowerCase();
+
+  // `patch` first: transdermal is its own chip.
+  if (/\bpatch(es)?\b|\btransdermal\b/.test(r)) return 'patch';
+
+  // `injection` early: oral formulations sometimes include the word
+  // "solution" / "suspension", and we want injectables claimed before
+  // the oral-liquid route examines the same word.
+  if (
+    /\binjection\b|\binj\b|\biv\b|\bim\b|\bsc\b|\bsubcutaneous\b|\bparenteral\b|\bintravenous\b|\bintramuscular\b|\bprefilled\b|\bsyringe\b|\bvial\b|\bampul\b|\bampoule\b/.test(
+      r,
+    )
+  ) {
+    return 'injection';
+  }
+
+  // Inhaled
+  if (/\binhal(er|ation)?\b|\bnebuli?zer\b|\baerosol\b/.test(r)) return 'inhaled';
+
+  // Nasal
+  if (/\bnasal\b/.test(r)) return 'nasal';
+
+  // Rectal
+  if (/\bsuppository\b|\benema\b|\brectal\b/.test(r)) return 'rectal';
+
+  // Oral solid (tablet, capsule, chewable, lozenge, granule)
+  if (
+    /\btab(let|lets)?\b/.test(r) ||
+    /\bcap(let|sule|lets|sules)?\b/.test(r) ||
+    /\bchew(able)?\b/.test(r) ||
+    /\blozenge\b/.test(r) ||
+    /\bgranule\b/.test(r)
+  ) {
+    return 'oral solid';
+  }
+
+  // Oral liquid (solution / suspension / syrup / elixir / drops — but
+  // only if not already claimed as injection above. Drops route to
+  // oral liquid by default; the 8-chip set has no separate "eye/ear"
+  // bucket, so eye drops / ear drops / otic drops without stronger
+  // markers here would otherwise fall through to `null` and vanish
+  // from filter chips. Injectable markers (`inj` / `iv` / `im` etc.)
+  // are checked before this point, so injectable drops don't reach
+  // here.)
+  if (
+    /\bsolution\b|\bsuspension\b|\bsyrup\b|\belixir\b|\bmixture\b|\bconcentrate\b|\bdrop[s]?\b/.test(r)
+  ) {
+    return 'oral liquid';
+  }
+
+  // Topical (cream, ointment, gel, lotion, wash, scalp, skin)
+  if (
+    /\bcream\b|\bointment\b|\bgel\b|\blotion\b|\bwash\b|\bscalp\b|\bskin\b|\btopical\b/.test(r)
+  ) {
+    return 'topical';
+  }
+
+  return null;
+}

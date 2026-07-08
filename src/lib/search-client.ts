@@ -9,7 +9,10 @@ export interface SearchHit {
   score: number;
   brandName: string | null;
   genericName: string;
+  /** Raw `dosageForm` from PDDF — kept verbatim on the result row. */
   dosageForm: string | null;
+  /** Bucket category (one of the 8 canonical chips). */
+  canonicalDosageForm: string | null;
   manufacturer: string | null;
   isLimitedUse: boolean;
   inLcaCategory: boolean;
@@ -32,6 +35,10 @@ interface SearchInputDoc {
 
 let STATE: SearchState | null = null;
 let LOAD_PROMISE: Promise<SearchState> | null = null;
+
+// Cached promise so the canonical-dosage-forms.json fetch happens once
+// per page load even if `listCanonicalDosageForms()` is called many times.
+let CANONICAL_LIST_PROMISE: Promise<string[]> | null = null;
 
 // Project-site base path = '/medsearch'. We deliberately encode the
 // string as base64 and decode at runtime rather than declaring a
@@ -108,10 +115,13 @@ export function ensureSearchLoaded(): Promise<SearchState> {
 }
 
 /** Run a search and return ranked results. */
-export async function search(query: string, opts?: { limit?: number; dosageForm?: string | null }): Promise<SearchHit[]> {
+export async function search(query: string, opts?: { limit?: number; canonicalDosageForm?: string | null }): Promise<SearchHit[]> {
   const state = await ensureSearchLoaded();
   const limit = opts?.limit ?? 100;
-  const dosageForm = opts?.dosageForm?.trim() ?? '';
+  // `canonicalDosageForm` is one of the 8 canonical chip names (e.g. "oral
+  // solid", "topical"). We filter by canonical category, not the raw
+  // PDDF value, so the chip strip is intentionally limited to those 8.
+  const canonicalFilter = (opts?.canonicalDosageForm ?? '').trim();
   const trimmed = query.trim();
   if (!trimmed) return [];
   const results = state.index.search(trimmed);
@@ -123,27 +133,33 @@ export async function search(query: string, opts?: { limit?: number; dosageForm?
       brandName: (r['brandName'] as string | null) ?? null,
       genericName: String(r['genericName'] ?? ''),
       dosageForm: (r['dosageForm'] as string | null) ?? null,
+      canonicalDosageForm: (r['canonicalDosageForm'] as string | null) ?? null,
       manufacturer: (r['manufacturer'] as string | null) ?? null,
       isLimitedUse: c?.isLimitedUse ?? false,
       inLcaCategory: c?.inLcaCategory ?? false,
       inRdpCategory: c?.inRdpCategory ?? false,
     };
   });
-  if (dosageForm) {
-    hits = hits.filter((h) => (h.dosageForm ?? '').toLowerCase() === dosageForm.toLowerCase());
+  if (canonicalFilter) {
+    hits = hits.filter((h) => (h.canonicalDosageForm ?? '') === canonicalFilter);
   }
   return hits.slice(0, limit);
 }
 
-/** Distinct, normalized dosage forms present in the dataset (lazy). */
-export async function listDosageForms(): Promise<string[]> {
-  const state = await ensureSearchLoaded();
-  const set = new Set<string>();
-  for (const row of state.companionById.values()) {
-    const f = (row.dosageForm ?? '').trim();
-    if (f) set.add(f);
-  }
-  return Array.from(set).sort((a, b) => a.localeCompare(b));
+/**
+ * Distinct, canonical dosage-form categories for the home-page chip
+ * strip. Reads `canonical-dosage-forms.json` (written by the pipeline
+ * at build time) so the frontend and the pipeline share one source of
+ * truth — never go out of sync.
+ */
+export async function listCanonicalDosageForms(): Promise<string[]> {
+  if (CANONICAL_LIST_PROMISE) return CANONICAL_LIST_PROMISE;
+  CANONICAL_LIST_PROMISE = (async () => {
+    const r = await fetch(`${BASE_PATH}/data/canonical-dosage-forms.json`);
+    if (!r.ok) throw new Error(`canonical-dosage-forms.json: ${r.status}`);
+    return (await r.json()) as string[];
+  })();
+  return CANONICAL_LIST_PROMISE;
 }
 
 /** Debounce a function in the browser. */

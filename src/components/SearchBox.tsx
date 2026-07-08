@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { debounce, listDosageForms, search, type SearchHit } from '@/lib/search-client';
+import { debounce, listCanonicalDosageForms, search, type SearchHit } from '@/lib/search-client';
 
 /**
  * Search box with live results and a dosage-form filter chip strip.
@@ -23,10 +23,12 @@ export default function SearchBox() {
     inputRef.current?.focus();
   }, []);
 
-  // Lazy-load dosage form filter chips once.
+  // Lazy-load dosage form filter chips once. We use the canonical
+  // 8-form list (oral solid, oral liquid, etc.) — raw PDDF dosage
+  // form strings produce ~50 weird categories otherwise.
   useEffect(() => {
     let cancelled = false;
-    listDosageForms()
+    listCanonicalDosageForms()
       .then((list) => {
         if (!cancelled) setForms(list);
       })
@@ -41,7 +43,7 @@ export default function SearchBox() {
   const run = useCallback(async (q: string) => {
     try {
       setLoading(true);
-      const results = await search(q, { dosageForm: activeForm });
+      const results = await search(q, { canonicalDosageForm: activeForm });
       setHits(results);
     } catch (err) {
       setError((err as Error).message);
