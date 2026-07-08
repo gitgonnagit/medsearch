@@ -8,8 +8,13 @@ on:
   # Allow manual triggers (workflow_dispatch) for testing the full loop.
   workflow_dispatch:
 
+# `actions/deploy-pages@v4` requires `pages: write` + `id-token: write`
+# for the OIDC-based Pages deployment token. `contents: read` keeps the
+# checkout step narrow.
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 # Only one deployment per schedule slot — guard against overlapping runs.
 concurrency:
