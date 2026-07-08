@@ -18,6 +18,7 @@
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  DEFAULT_FETCH_TIMEOUT_MS,
   fetchLcaXlsx,
   fetchPddfCsv,
   fetchRdpXlsx,
@@ -51,6 +52,10 @@ async function findFirstXlsxUrl(landing: string, kind: 'lca' | 'rdp'): Promise<s
   // budget and silently mask a real regression.
   const html = await withRetry(async () => {
     const res = await fetch(landing, {
+      // Same explicit timeout as pipeline/sources.ts:downloadTo — undici's
+      // 10s default is too aggressive for gov.bc.ca under load and was
+      // causing transient connect timeouts on GH Actions ubuntu-latest.
+      signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS),
       headers: { 'user-agent': 'MedSearch/0.1 (+https://github.com/buffy/medsearch)' },
     });
     if (!res.ok) throw new Error(`Failed to fetch LCA/RDP landing page: ${res.status}`);
