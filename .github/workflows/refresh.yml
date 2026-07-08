@@ -104,7 +104,17 @@ jobs:
           # portably, and `github.event.repository.name` is empty on the
           # schedule cron).
           NEXT_PUBLIC_BASE_PATH: /medsearch
-        run: npm run build
+        # Wipe `.next` before building so Next.js's incremental-compile
+        # disk cache can't be reused across runs. Empirically this matters:
+        # back-to-back GHA runs on otherwise-identical VMs were producing
+        # the same Webpack chunk hashes even when the source AST had
+        # changed, leaving the live bundle holding bare `${base}/data/...`
+        # fetch URLs that 404 against the project-site subpath. The runner
+        # is meant to be ephemeral, but the rebuild guarantee is now part
+        # of the workflow rather than a property of the runner. Typical
+        # cost: ~3–5 min clean build (vs. ~1–2 min incremental) — cheap
+        # insurance against silently stale deploys.
+        run: rm -rf .next && npm run build
 
       # Merge the emitter's out-static/ into out/ so both producers land in
       # the same Pages artifact.
