@@ -8,13 +8,13 @@ on:
   # Allow manual triggers (workflow_dispatch) for testing the full loop.
   workflow_dispatch:
 
-# `JamesIves/github-pages-deploy-action@v4` pushes the `out/` directory
-# directly to the `gh-pages` branch, where Pages serves it natively.
-# This sidesteps the `actions/deploy-pages@v4` Artifact API, which
-# rejected our 694 MB / 121k-entry artifact with the generic
-# "hard links / symlinks / size" error on the free tier.
+# `actions/deploy-pages@v4` requires `pages: write` + `id-token: write`
+# (OIDC-based Pages deployment token). `contents: read` keeps the
+# checkout step narrow.
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 # Only one deployment per schedule slot — guard against overlapping runs.
 concurrency:
@@ -25,6 +25,12 @@ jobs:
   refresh-and-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      # Cap the emitted drug pages for free-tier GitHub Pages.
+      # ~5,000 drugs × ~10 KB HTML ≈ 50 MB of detail pages; well inside
+      # the Pages free-tier artifact pipeline. To raise this, provision
+      # a non-free Pages or static host (Cloudflare, Netlify, Vercel).
+      MEDSEARCH_DRUG_LIMIT: '5000'
     steps:
       - uses: actions/checkout@v4
 
@@ -47,9 +53,10 @@ jobs:
         run: npm run pipeline:check
 
       # The custom HTML emitter (`pipeline/emit-static.ts`) bypasses Next.js
-      # for /drug/[din]/*.html — Next.js would OOM/timeout on the free-tier
-      # runner rendering ~60k React pages. The emitter reads drugs.json and
-      # writes one self-contained index.html per DIN into ./out-static/.
+      # for /drug/[din]/*.html and emits up to MEDSEARCH_DRUG_LIMIT drug
+      # pages into ./out-static/. On free-tier GHA we cannot afford the
+      # 60,734-page artifact (~700 MB) — `actions/deploy-pages@v4` rejects
+      # it with the generic "no symlinks/hardlinks/<10GB" error.
       - name: Emit drug detail pages
         env:
           NEXT_PUBLIC_BASE_PATH: ${{ vars.NEXT_PUBLIC_BASE_PATH }}
@@ -65,7 +72,7 @@ jobs:
         run: npm run build
 
       # Merge the emitter's out-static/ into out/ so both producers land in
-      # the same GitHub Pages artifact.
+      # the same Pages artifact.
       - name: Merge static outputs
         run: npm run build:merge
 
@@ -79,23 +86,12 @@ jobs:
           ls out/drug | head -3
           du -sh out
 
-      # Disable GitHub Pages' built-in Jekyll processing — without this
-      # Pages will try to walk all 60,734 drug HTMLs through the Ruby
-      # Jekyll pipeline and OOM at deploy time.
-      - name: Add .nojekyll marker
-        run: touch out/.nojekyll
-
-      # Push `out/` directly to the `gh-pages` branch. Pages then serves
-      # it natively. Git handles tens of thousands of files efficiently
-      # via tree objects, so this avoids the artifact API's per-file
-      # extraction timeout.
-      - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          branch: gh-pages
-          folder: out
-          clean: true
-          single-commit: true
-          git_config_name: medsearch-bot
-          git_config_email: medsearch-bot@users.noreply.github.com
+          path: out
+
+      # GitHub Pages' dynamic pages-build-deployment workflow fires at the
+      # end of this run, picks up the `github-pages` artifact, and runs
+      # `actions/deploy-pages@v4` against the GitHub Pages service. That is
+      # the actual deploy step — we do not invoke it ourselves.
