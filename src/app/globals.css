@@ -633,6 +633,78 @@ code {
     flex-direction: column;
     gap: var(--sp-xs);
   }
+  /* Cost callout drops its 2-column amount grid on small screens so
+     the big numbers each get their own line instead of cramping. */
+  .cost-callout__amounts {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Cost callout — top-of-page "Patient Pays" panel on the drug detail
+ * page. Headlined as the patient share (30% post-deductible) for the
+ * cheapest daily cost across active plans. The same `.cost-callout*`
+ * classes are consumed by the static-HTML emitter (pipeline/emit-static.ts)
+ * which copies globals.css into out/medsearch.css at build time. */
+.cost-callout {
+  margin: 0 0 var(--sp-xl);
+  padding: var(--sp-lg);
+  background: linear-gradient(180deg, var(--color-accent-soft), var(--color-surface));
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-radius: var(--r-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.cost-callout__eyebrow {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--color-accent-strong);
+}
+
+.cost-callout__amounts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-md);
+}
+
+.cost-callout__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cost-callout__label {
+  font-size: var(--fs-small);
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.cost-callout__amount {
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.cost-callout__reference {
+  font-size: var(--fs-small);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.cost-callout__disclosure {
+  padding: var(--sp-sm) var(--sp-md);
+  background: rgba(15, 118, 110, 0.06);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-small);
+  color: var(--color-warn);
+  font-weight: 500;
 }
 
 /* Respect users who prefer reduced motion. */

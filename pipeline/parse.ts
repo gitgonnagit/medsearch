@@ -53,6 +53,7 @@ interface RawRow {
   canFedRegCd: string | null;
   planDescription: string | null;
   maxDaysSupply: number | null;
+  maxDailyQty: number | null;
   qtyLimit: string | null;
   formularyListDate: string | null;
   ltdUseFlag: boolean;
@@ -91,6 +92,7 @@ function rowFromRecord(rec: Record<string, unknown>): RawRow | null {
     canFedRegCd: String(rec['Can Fed Reg Cd'] ?? '').trim() || null,
     planDescription: String(rec['Pcare Plan Desc'] ?? '').trim() || null,
     maxDaysSupply: parseNum(rec['Max Days Supply']),
+    maxDailyQty: parseNum(rec['Max Daily Qty']),
     qtyLimit: String(rec['Qty Limit'] ?? '').trim() || null,
     formularyListDate: parseDate(rec['Formulary List Date']),
     ltdUseFlag: yn(rec['Ltd Use Flag']),
@@ -177,6 +179,7 @@ export function bucketsToDrugs(buckets: Map<string, Bucket>): Drug[] {
         rdpPrice: row.rdpPrice,
         rdpExcludedPlans: row.rdpExcludedPlans,
         maxDaysSupply: row.maxDaysSupply,
+        maxDailyQty: row.maxDailyQty,
         qtyLimit: row.qtyLimit,
         formularyListDate: row.formularyListDate,
         trialFlg: row.trialFlg,

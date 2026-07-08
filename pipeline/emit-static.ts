@@ -28,6 +28,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Drug, PlanCoverage, SiteMeta } from './types.js';
+import { computeCostBreakdown } from './helpers.js';
 
 const DATA_DIR = process.env.MEDSEARCH_DATA_DIR ?? './data-cache';
 const STATIC_OUT_DIR = process.env.MEDSEARCH_STATIC_OUT_DIR ?? './out-static';
@@ -237,6 +238,49 @@ function renderPriceCallout(d: Drug): string {
   return `<div class="detail__callout">${lines.join('\n')}</div>`;
 }
 
+const fmtCurrency = (n: number): string => `$${n.toFixed(2)}`;
+
+/**
+ * Top-of-page "Patient Pays" panel. The user-facing headline is the
+ * patient share (30% post-deductible) for the cheapest daily cost across
+ * the drug's active plans: monthly + 3-month totals. Beneath the headline
+ * we surface the source plan + unit math, full-cost reference, and a
+ * small disclosure when `maxDailyQty === 1` on a unit-dose form
+ * (injection / patch / inhaler / vial / etc.) so users see "1 unit/day"
+ * rather than a 30× implication.
+ */
+function renderCostCallout(d: Drug): string {
+  const breakdown = computeCostBreakdown(d.plans, d.dosageForm);
+  if (!breakdown.source) return '';
+  const { source, fullMonthly, fullThreeMonth, patientMonthly, patientThreeMonth, unitDisclosure } =
+    breakdown;
+  return `
+    <section class="cost-callout">
+      <div class="cost-callout__eyebrow">Patient pays (after deductible, 30% coverage)</div>
+      <div class="cost-callout__amounts">
+        <div class="cost-callout__row">
+          <span class="cost-callout__label">Monthly</span>
+          <span class="cost-callout__amount">${fmtCurrency(patientMonthly!)}</span>
+        </div>
+        <div class="cost-callout__row">
+          <span class="cost-callout__label">3 Months</span>
+          <span class="cost-callout__amount">${fmtCurrency(patientThreeMonth!)}</span>
+        </div>
+      </div>
+      <div class="cost-callout__reference">
+        Cheapest source plan <strong>${source.plan}</strong>: ${fmtCurrency(source.maxPrice)} per unit
+        × ${source.unitsPerDay} unit/day = ${fmtCurrency(source.costPerDay)} per day.
+        Reference full cost: ${fmtCurrency(fullMonthly!)} per month ($11 dispensing fee)
+        and ${fmtCurrency(fullThreeMonth!)} per 3 months; the 30% above is what the patient pays
+        once Fair PharmaCare's deductible is met.
+      </div>${
+        unitDisclosure
+          ? `\n      <div class="cost-callout__disclosure">${esc(unitDisclosure)}</div>`
+          : ''
+      }
+    </section>`;
+}
+
 function renderRelatedDrugs(d: Drug, allDrugs: Drug[]): string {
   // Compute "related" drugs inline from the canonical list (instead of reading
   // a separate sidecar) so the emitter is the source of truth here.
@@ -339,6 +383,7 @@ function renderDrugPage(d: Drug, allDrugs: Drug[], meta: SiteMeta | null, base: 
 ${renderHeader(base)}
 <main>
   <article class="container detail">
+    ${renderCostCallout(d)}
     <header class="detail__header">
       <p class="detail__eyebrow">DIN/PIN ${esc(d.id)} &middot; ${esc(d.idKind === 'din' ? 'Drug Identification Number' : 'Product Identification Number')}</p>
       <h1 class="detail__title">${esc(d.brandName ?? d.genericName)}</h1>

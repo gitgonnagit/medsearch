@@ -32,6 +32,11 @@ export interface PlanCoverage {
   rdpExcludedPlans: string | null;
   /** Maximum days supply allowed in this plan. */
   maxDaysSupply: number | null;
+  /** Maximum units per day PharmaCare will cover for this drug in this plan
+   *  (`Max Daily Qty` column in PDDF source). Drives cost-per-day on the
+   *  detail page's "Patient Pays" callout: costPerDay = maxPrice × maxDailyQty.
+   *  null when the source doesn't specify a daily cap. */
+  maxDailyQty: number | null;
   /** Per-dispenser quantity limit (Free-form text in source; preserve as-given). */
   qtyLimit: string | null;
   /** Formula listing date for this plan (ISO `YYYY-MM-DD` or null). */

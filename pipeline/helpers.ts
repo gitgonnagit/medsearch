@@ -241,3 +241,99 @@ export function canonicalizeDosageForm(raw: string | null): CanonicalDosageForm 
 
   return null;
 }
+
+/** Result of evaluating per-plan costs for one drug and picking the
+ *  cheapest daily cost. Used by the detail page's "Patient Pays" callout. */
+export interface CostBreakdown {
+  /** Cheapest source plan (smallest `maxPrice × maxDailyQty`). */
+  source: {
+    plan: string;
+    maxPrice: number;
+    unitsPerDay: number;
+    costPerDay: number;
+  } | null;
+  /** Pre-fee, pre-share full monthly + 3-month totals (used as the
+   *  reference context under the patient share callout). */
+  fullMonthly: number | null;
+  fullThreeMonth: number | null;
+  /** Patient share after the deductible (30% of full, matching the
+   *  user's mental model of "70% / 30%" Fair-PharmaCare stepped plan). */
+  patientMonthly: number | null;
+  patientThreeMonth: number | null;
+  /** Disclosure string for unit-dose routes (1 vial/day, 1 patch/day)
+   *  so users see the unit-shape rather than a 30× implication. */
+  unitDisclosure: string | null;
+}
+
+const DISPENSING_FEE = 11.0;
+const PATIENT_SHARE = 0.30;
+
+/**
+ * Returns the cheapest daily cost across the drug's active plans and
+ * computes 30/90-day patient-share totals using a flat 30% post-
+ * deductible rate (matching the user's mental model of "70% / 30%").
+ *
+ * Filters to plans where both `maxPrice` and `maxDailyQty` are non-null
+ * and positive. Returns `source: null` when no plan qualifies — the
+ * renderer uses that signal to skip the callout entirely.
+ *
+ * `unitDisclosure` fires only when `unitsPerDay === 1` AND the raw
+ * `dosageForm` matches a unit-dose route (injection / solution /
+ * suspension / patch / inhaler / spray / vial / etc.). For per-tablet
+ * or per-capsule schedules it's suppressed because "1 tablet/day"
+ * isn't surprising on its own; the line would just be clutter.
+ */
+export function computeCostBreakdown(
+  plans: PlanCoverage[],
+  dosageForm: string | null,
+): CostBreakdown {
+  const candidates = plans.filter(
+    (p) =>
+      p.maxPrice != null &&
+      p.maxDailyQty != null &&
+      p.maxDailyQty > 0,
+  );
+  if (candidates.length === 0) {
+    return {
+      source: null,
+      fullMonthly: null,
+      fullThreeMonth: null,
+      patientMonthly: null,
+      patientThreeMonth: null,
+      unitDisclosure: null,
+    };
+  }
+  // Pick smallest costPerDay (= maxPrice × maxDailyQty) across plans.
+  const cheapest = candidates.reduce((a, b) =>
+    (a.maxPrice! * a.maxDailyQty!) <= (b.maxPrice! * b.maxDailyQty!) ? a : b,
+  );
+  const costPerDay = cheapest.maxPrice! * cheapest.maxDailyQty!;
+  const fullMonthly = costPerDay * 30 + DISPENSING_FEE;
+  const fullThreeMonth = costPerDay * 90 + DISPENSING_FEE;
+  const patientMonthly = fullMonthly * PATIENT_SHARE;
+  const patientThreeMonth = fullThreeMonth * PATIENT_SHARE;
+
+  const form = (dosageForm ?? '').toLowerCase();
+  const isUnitDoseForm =
+    cheapest.maxDailyQty === 1 &&
+    /\b(injection|solution|suspension|syrup|elixir|patch|inhaler|spray|vial|ampul|ampoule|nebulizer|drop|sachet|enema)\b/.test(
+      form,
+    );
+  const unitDisclosure = isUnitDoseForm
+    ? `Cost based on max daily quantity of 1 unit (${form.trim()}).`
+    : null;
+
+  return {
+    source: {
+      plan: cheapest.plan,
+      maxPrice: cheapest.maxPrice!,
+      unitsPerDay: cheapest.maxDailyQty!,
+      costPerDay,
+    },
+    fullMonthly,
+    fullThreeMonth,
+    patientMonthly,
+    patientThreeMonth,
+    unitDisclosure,
+  };
+}
