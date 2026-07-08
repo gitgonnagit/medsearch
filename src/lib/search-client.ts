@@ -44,7 +44,21 @@ export function ensureSearchLoaded(): Promise<SearchState> {
   if (STATE && STATE.ready) return Promise.resolve(STATE);
   if (LOAD_PROMISE) return LOAD_PROMISE;
   LOAD_PROMISE = (async () => {
-    const base = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+    // Resolve the base path from the *runtime* URL rather than from a
+    // build-time env var alone: project sites live under
+    // `${owner}.github.io/${repo}/` and the build-time
+    // `process.env.NEXT_PUBLIC_BASE_PATH` historically lands empty when
+    // the CI env expression isn't picked up by Next's inlining
+    // pass. Auto-detecting from `window.location.pathname` (the first
+    // segment after the host — i.e. the repo name) is portable across
+    // any project-site deploy without re-wiring CI.
+    const base = (() => {
+      if (typeof window !== 'undefined') {
+        const seg = window.location.pathname.split('/').filter(Boolean)[0];
+        if (seg) return '/' + seg;
+      }
+      return process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+    })();
     const [indexJson, companion]: [string, SearchCompanionRow[]] = await Promise.all([
       fetch(`${base}/data/search-index.json`).then((r) => {
         if (!r.ok) throw new Error(`search-index.json: ${r.status}`);
