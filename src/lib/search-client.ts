@@ -78,22 +78,25 @@ export function ensureSearchLoaded(): Promise<SearchState> {
       }),
     ]);
 
-    // MiniSearch 7.x: loadJSON() takes an `AsPlainObject` (the parsed JSON
-    // object). loadJS() does the same; we parse once then loadIt from object.
-    const mini = MiniSearch.loadJSON<SearchInputDoc>(
-      JSON.parse(indexJson),
-      {
-        idField: 'id',
-        fields: ['brandName', 'genericName', 'manufacturer', 'dosageForm', 'id'],
-        storeFields: ['id', 'brandName', 'genericName', 'dosageForm', 'manufacturer'],
-        searchOptions: {
-          prefix: true,
-          fuzzy: 0.2,
-          boost: { brandName: 2, genericName: 1, dosageForm: 1.5, manufacturer: 0.5, id: 1.0 },
-          combineWith: 'AND',
-        },
+    // MiniSearch 7.x: `loadJSON()` accepts the *stringified* JSON of a
+    // previously-saved index (i.e. the buffer we just fetched). It calls
+    // `JSON.parse()` internally. Passing a parsed object would cause V8 to
+    // coerce it to the literal string `'[object Object]'` first, which
+    // `JSON.parse` then rejects with `"[object Object]" is not valid JSON`.
+    // That is exactly the user-facing error banner we were chasing through
+    // the basePath investigations — the upstream fetches were always fine.
+    // (Use `loadJS()` instead if you have a parsed object on hand.)
+    const mini = MiniSearch.loadJSON<SearchInputDoc>(indexJson, {
+      idField: 'id',
+      fields: ['brandName', 'genericName', 'manufacturer', 'dosageForm', 'id'],
+      storeFields: ['id', 'brandName', 'genericName', 'dosageForm', 'manufacturer'],
+      searchOptions: {
+        prefix: true,
+        fuzzy: 0.2,
+        boost: { brandName: 2, genericName: 1, dosageForm: 1.5, manufacturer: 0.5, id: 1.0 },
+        combineWith: 'AND',
       },
-    );
+    });
 
     const companionById = new Map<string, SearchCompanionRow>();
     for (const row of companion) companionById.set(row.id, row);
