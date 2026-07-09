@@ -64,7 +64,15 @@ export async function buildSearchIndex(
     // no per-keystroke cost math. Returns null when no plan has a
     // positive displayPrice; the row then shows a "not covered" tag
     // instead of the price block.
-    priceSummary: computePriceSummary(d.plans, d.dosageForm, d.canonicalDosageForm),
+    priceSummary: computePriceSummary(
+      d.plans,
+      d.dosageForm,
+      d.canonicalDosageForm,
+      // Pass genericName so `computePriceSummary` can apply
+      // category-specific rules like the NP force-include for diabetes
+      // drugs without forcing every caller to thread it through.
+      d.genericName,
+    ),
   }));
 
   const meta: SiteMeta = {

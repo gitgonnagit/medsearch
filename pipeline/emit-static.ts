@@ -380,17 +380,58 @@ function renderMeta(d: Drug): string {
 
 // --- Per-drug page -------------------------------------------------------
 
+/** Strip strength tokens + salt suffixes from a generic name string, so
+ *  the result is the chemical generic alone (e.g.
+ *  "METFORMIN HCL 500 MG TA" → "metformin hcl", used to decide whether
+ *  the subtitle below the title is redundant once strength is folded
+ *  into the title. Same token patterns as `pipeline/helpers.ts`. */
+function genericStripped(generic: string): string {
+  return generic
+    // 1. drop strength tokens like "500 mg", "5 mg/mL", etc.
+    .replace(
+      /\b\d+(\.\d+)?\s*(mg|mcg|µg|g|ml|mL|iu|%|u|units?|mmol)\/?(kg|m\^?2)?\b/gi,
+      '',
+    )
+    // 2. drop form-token suffixes — "TA", "TAB", "CAP", etc.
+    .replace(/\b(TA|TAB|TABS|CAP|CAPS|ER|XR|SR|LA|CR|TABERGR24H|TBMP\s*24HR|TABLET|CAPSULE|TABLETS|CAPSULES)\b/gi, '')
+    // 3. drop route words left over after the above
+    .replace(/\b(TOPICAL|ORAL|INHALATION|INJECTION)\b/gi, '')
+    // 4. collapse whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function renderDrugPage(d: Drug, allDrugs: Drug[], meta: SiteMeta | null, base: string): string {
+  // Title includes BOTH brand name AND strength when available, so a
+  // user seeing the page reads "Metformin 500 mg" without having to
+  // scan to the muted subtitle. Reference: drugsearch.ca listing rows
+  // ("METFORMIN TAB 500MG"). Strength is normalised to lowercase so
+  // PDDF-supplied "500 MG" renders as "500 mg" to match the
+  // lowercase-only brand-name convention we use elsewhere.
   const displayName = d.brandName ?? d.genericName;
-  const title = `${displayName} (DIN/PIN ${d.id})`;
+  const strengthSuffix = d.strength ? ` ${d.strength.toLowerCase()}` : '';
+  const displayTitle = `${displayName}${strengthSuffix}`;
+  const title = `${displayTitle} (DIN/PIN ${d.id})`;
   const escapeTitle = esc(title);
   const description =
-    `Coverage, pricing, and Special Authority status for ${displayName} ` +
+    `Coverage, pricing, and Special Authority status for ${displayTitle} ` +
     `(DIN/PIN ${d.id}) across BC PharmaCare plans.`;
   const canonical = `${base}/drug/${encodeURIComponent(d.id)}/`;
   const cssHref = `${base}/${CSS_FILENAME}`;
   const faviconHref = `${base}/favicon.svg`;
-  const genericLine = d.brandName ? `<p class="detail__generic">${esc(d.genericName)}</p>` : '';
+  // Strip strength tokens out of the generic for the subtitle / redun-
+  // dancy check. When (a) there is no brand name at all (true generic)
+  // OR (b) the brand name already contains the cleaned generic text, the
+  // subtitle would just restate the big-bold title and is suppressed.
+  const cleanedGeneric = genericStripped(d.genericName).toLowerCase();
+  const brandLc = (d.brandName ?? '').toLowerCase();
+  const subtitleRedundant =
+    !d.brandName ||
+    brandLc === cleanedGeneric ||
+    (cleanedGeneric.length >= 6 && brandLc.includes(cleanedGeneric));
+  const genericLine = !subtitleRedundant
+    ? `<p class="detail__generic">${esc(genericStripped(d.genericName))}</p>`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -414,7 +455,7 @@ ${renderHeader(base)}
     ${renderCostCallout(d)}
     <header class="detail__header">
       <p class="detail__eyebrow">DIN/PIN ${esc(d.id)} &middot; ${esc(d.idKind === 'din' ? 'Drug Identification Number' : 'Product Identification Number')}</p>
-      <h1 class="detail__title">${esc(d.brandName ?? d.genericName)}</h1>
+      <h1 class="detail__title">${esc(displayTitle)}</h1>
       ${genericLine}
       <dl class="detail__meta">
         ${renderMeta(d)}

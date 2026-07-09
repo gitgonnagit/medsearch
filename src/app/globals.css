@@ -793,9 +793,14 @@ code {
 }
 
 .cost-callout__pane-header {
-  font-size: var(--fs-body);
+  /* Aligned with the homepage's h3 sub-heading rhythm so the pane
+   * header reads as part of the same site rather than a louder
+   * clinical-looking sub-product. --fs-h3 is the same token used by
+   * .hero__subtitle on the landing page. */
+  font-size: var(--fs-h3);
   font-weight: 600;
   color: var(--color-text);
+  letter-spacing: -0.01em;
 }
 
 .cost-callout__pane-sub {

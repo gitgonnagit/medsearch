@@ -282,6 +282,53 @@ export function canonicalizeDosageForm(raw: string | null): CanonicalDosageForm 
  *  `computePriceSummary` below. */
 export const FAIR_PHARMACARE_PLAN = 'I';
 
+/** Plan code "NP" historically covers a defined list of "no-cost" drugs
+ *  (historically diabetes medications + a small set of others, per
+ *  BC PharmaCare NP plan guidance). The PDDF-derived `coverageLabel`
+ *  for NP rows may not match the model — some drugs ship with
+ *  literal-zero displayPrice for plan NP, after the literal-zero fix
+ *  those rows fall through to "Not covered" without ever surfacing
+ *  the free-to-NP-enrollees fact. Force-included below for known
+ *  diabetes-molecule generics; for any other category, NP behaves
+ *  normally (it shows up in the plan table and is treated like
+ *  every other plan). */
+export const NP_PLAN = 'NP';
+
+/** Lowercase substring patterns used to identify diabetes-molecule
+ *  generic names for the NP force-include. Order is irrelevant —
+ *  this is a `.includes` scan over the normalised genericName, not a
+ *  precedence-ordered matcher. Add new molecules here if the
+ *  business rule expands; conservative rather than exhaustive to
+ *  avoid false-positive coverage claims. */
+export const DIABETES_GENERIC_PATTERNS: readonly string[] = [
+  // biguanides
+  'metformin',
+  // sulfonylureas
+  'gliclazide', 'glipizide', 'glyburide', 'glimepiride', 'tolbutamide',
+  // insulins + basal/bolus analogues
+  'insulin', 'glargine', 'detemir', 'degludec', 'aspart', 'lispro', 'glutargine',
+  // GLP-1 receptor agonists
+  'semaglutide', 'liraglutide', 'dulaglutide', 'exenatide', 'lixisenatide',
+  // DPP-4 inhibitors ("-gliptins")
+  'sitagliptin', 'linagliptin', 'saxagliptin', 'alogliptin', 'vildagliptin',
+  // SGLT2 inhibitors ("-flozins")
+  'empagliflozin', 'dapagliflozin', 'canagliflozin', 'ertugliflozin',
+  // thiazolidinediones + alpha-glucosidase inhibitors
+  'rosiglitazone', 'pioglitazone', 'troglitazone',
+  'acarbose', 'miglitol',
+];
+
+/** True if the supplied generic name (case-insensitive, after light
+ *  normalisation) suggests a diabetes medication covered by plan NP.
+ *  Returns false on null/empty input — that branch is meaningful for
+ *  drugs missing a generic name entirely (PIN-classified products,
+ *  research/study compounds, etc.). */
+export function isDiabetesDrug(genericName: string | null | undefined): boolean {
+  if (!genericName) return false;
+  const n = genericName.toLowerCase();
+  return DIABETES_GENERIC_PATTERNS.some((p) => n.includes(p));
+}
+
 /** Inline-listing-level price summary. Smaller than CostBreakdown —
  *  just enough for the per-row display on the search home page. All
  *  fields are nullable; when every plan has zero/null displayPrice
@@ -383,6 +430,13 @@ export function computePriceSummary(
   plans: PlanCoverage[],
   dosageForm: string | null,
   canonical: CanonicalDosageForm | null,
+  // Optional fourth arg: the drug's generic name. Used to apply
+  // category-specific force-include rules below (e.g. NP plan for
+  // diabetes drugs) when callers have it on hand. Default null keeps
+  // the signature back-compat — callers that don't know the generic
+  // (none today, but reserved for future tooling) just skip the
+  // category rule without throwing.
+  genericName: string | null = null,
 ): PriceSummary | null {
   const candidates = plans.filter(
     (p) => p.displayPrice != null && p.displayPrice > 0,
@@ -417,6 +471,14 @@ export function computePriceSummary(
   // go through the deductible / 30% / family-max structure spelled
   // out below the row instead. Limited Use plans (SA-required) are
   // also excluded — they don't auto-reimburse.
+  // Standard fully-covered filter: positive price, status Covered,
+  // NOT the Fair-PharmaCare plan (FPC is stepped, not $0). NP plan
+  // flows through the standard filter unchanged — when PDDF carries
+  // a positive displayPrice for NP on a non-diabetes drug, that's
+  // a legitimate fully-covered claim and we'd underreport if we
+  // excluded it. The diabetes-specific force-include below handles
+  // only the literal-zero / non-Covered cases where the standard
+  // filter would still drop NP.
   const fullyCoveredPlans = plans
     .filter(
       (p) =>
@@ -424,8 +486,27 @@ export function computePriceSummary(
         hasPositivePrice(p.displayPrice) &&
         p.plan !== FAIR_PHARMACARE_PLAN,
     )
-    .map((p) => p.plan)
-    .sort();
+    .map((p) => p.plan);
+
+  // BC PharmaCare NP plan (No-cost for specific categories): per the
+  // user's reference, NP covers 100% of diabetes medications. PDDF
+  // rows for "NP" on diabetes drugs sometimes ship with literal-zero
+  // `displayPrice` (so they fail `hasPositivePrice`), so the literal-
+  // zero guard above correctly drops them — but bypassing that for NP
+  // when the drug is a diabetes molecule is the user's intent here.
+  // Post-process only fires when (a) the drug is a diabetes molecule,
+  // (b) the drug has an NP plan row, and (c) NP didn't already flow
+  // through the standard filter. Conditional inclusion keeps non-
+  // diabetes drugs' fullyCoveredPlans untouched.
+  if (
+    genericName &&
+    isDiabetesDrug(genericName) &&
+    plans.some((p) => p.plan === NP_PLAN) &&
+    !fullyCoveredPlans.includes(NP_PLAN)
+  ) {
+    fullyCoveredPlans.push(NP_PLAN);
+  }
+  fullyCoveredPlans.sort();
 
   return {
     refFillUnits,
