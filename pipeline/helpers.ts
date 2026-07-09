@@ -242,6 +242,134 @@ export function canonicalizeDosageForm(raw: string | null): CanonicalDosageForm 
   return null;
 }
 
+/** Inline-listing-level price summary. Smaller than CostBreakdown —
+ *  just enough for the per-row display on the search home page. All
+ *  fields are nullable; when every plan has zero/null displayPrice
+ *  the entire summary is replaced with `null` and the listing UI
+ *  suppresses the price block. */
+export interface PriceSummary {
+  /** Reference fill quantity (units). Type-of-unit is `noun`. Derived
+   *  from the cheapest plan's `maxDaysSupply × maxDailyQty` with
+   *  fallbacks (90 days × 1 unit/day when source columns are null/0). */
+  refFillUnits: number;
+  /** Human noun for what a "unit" is — TABLETS for oral solid, PATCHES
+   *  for transdermal, ACTUATIONS for inhaled, etc. Centralized here so
+   *  frontend doesn't duplicate the form-to-noun mapping. Matches the
+   *  convention used by drugsearch.ca's listing rows ("for 180 TABLETS"). */
+  refFillNoun: string;
+  /** Pre-fee, pre-share total cost: cheapest plan's unit price × refFillUnits. */
+  totalCost: number;
+  /** Post-deductible patient share (30% of total), matching the
+   *  Fair-PharmaCare mental model used on the detail page's callout. */
+  patientCost: number;
+  /** PharmaCare plan codes where this drug is fully covered (label=Covered,
+   *  positive displayPrice). Limited Use plans are excluded — those drugs
+   *  require Special Authority first, so they don't auto-reimburse. */
+  fullyCoveredPlans: string[];
+}
+
+/** Default days-supply when the source `Max Days Supply` column is
+ *  null or 0. 90 days is the most common BC PharmaCare dispensing cycle
+ *  for maintenance drugs; matches the typical PDDF default for chronic
+ *  oral solids. */
+const DEFAULT_REFILL_DAYS = 90;
+
+/** Map a drug's (dosage form, canonical bucket) → the noun shown next
+ *  to the ref-fill count on the listing row ("180 TABLETS", "30 PATCHES").
+ *  TABLETS is the dominant case; non-oral-solid forms get specific
+ *  matches so users see e.g. PATCHES on a nicotine patch, ACTUATIONS
+ *  on an inhaler (rather than a generic "DOSES" that obscures the unit
+ *  the cost is calculated against). */
+function refFillNounFor(
+  _dosageForm: string | null,
+  canonical: CanonicalDosageForm | null,
+): string {
+  switch (canonical) {
+    case 'oral solid':
+      return 'TABLETS';
+    case 'patch':
+      return 'PATCHES';
+    case 'inhaled':
+      return 'ACTUATIONS';
+    case 'injection':
+      return 'DOSES';
+    case 'oral liquid':
+      return 'DOSES';
+    case 'topical':
+      return 'APPLICATIONS';
+    case 'nasal':
+      return 'DOSES';
+    case 'rectal':
+      return 'DOSES';
+    default:
+      return 'DOSES';
+  }
+}
+
+/**
+ * Per-drug price summary for the search-result row. Precomputed at
+ * pipeline time so the listing page renders with zero client-side cost
+ * computation (the search results load 16K drugs client-side; running
+ * filter+reduce on each render would be O(N) per keystroke).
+ *
+ * Inputs are the same primitive fields already aggregated into Drug
+ * (plans, dosageForm, canonicalDosageForm, the cheapest plan's
+ * maxDaysSupply, maxDailyQty). Math mirrors the detail page's
+ * computeCostBreakdown where overlap exists, with one intentional
+ * difference: this summary uses a per-fill reference (maxDaysSupply ×
+ * maxDailyQty × unit price) rather than a per-day rate, because the
+ * listing row is meant to communicate "what you'll actually pay at the
+ * counter for one fill" — not the daily rate buried under the detail
+ * page's monthly/3-month callout.
+ *
+ * Returns `null` when no plan has a positive displayPrice; the row
+ * suppresses the price block and (separately) shows "not covered"
+ * styling.
+ */
+export function computePriceSummary(
+  plans: PlanCoverage[],
+  dosageForm: string | null,
+  canonical: CanonicalDosageForm | null,
+): PriceSummary | null {
+  const candidates = plans.filter(
+    (p) => p.displayPrice != null && p.displayPrice > 0,
+  );
+  if (candidates.length === 0) return null;
+
+  // Cheapest plan drives both the unit price AND the fill quantity, so
+  // the row's dollar figure is internally consistent ("what ONE fill at
+  // the cheapest plan costs"). Picking a different plan's maxDaysSupply
+  // would silently misrepresent the patient's actual prescription.
+  // Same literal-0 handling as computeCostBreakdown: PDDF sometimes
+  // ships 0 where it means "no cap"; `??` wouldn't catch that.
+  const cheapest = candidates.reduce((a, b) =>
+    a.displayPrice! <= b.displayPrice! ? a : b,
+  );
+  const days = cheapest.maxDaysSupply != null && cheapest.maxDaysSupply > 0
+    ? cheapest.maxDaysSupply
+    : DEFAULT_REFILL_DAYS;
+  const perDay = cheapest.maxDailyQty != null && cheapest.maxDailyQty > 0
+    ? cheapest.maxDailyQty
+    : 1;
+  const refFillUnits = days * perDay;
+  const unitPrice = cheapest.displayPrice!;
+  const totalCost = unitPrice * refFillUnits;
+  const patientCost = totalCost * PATIENT_SHARE;
+
+  const fullyCoveredPlans = plans
+    .filter((p) => p.coverageLabel === 'Covered' && p.displayPrice != null && p.displayPrice > 0)
+    .map((p) => p.plan)
+    .sort();
+
+  return {
+    refFillUnits,
+    refFillNoun: refFillNounFor(dosageForm, canonical),
+    totalCost,
+    patientCost,
+    fullyCoveredPlans,
+  };
+}
+
 /** Result of evaluating per-plan costs for one drug and picking the
  *  cheapest daily cost. Used by the detail page's "Patient Pays" callout. */
 export interface CostBreakdown {

@@ -1,7 +1,7 @@
 'use client';
 
 import MiniSearch from 'minisearch';
-import type { SearchCompanionRow } from '@pipeline/types';
+import type { PriceSummary, SearchCompanionRow } from '@pipeline/types';
 
 /** Public shape of a search result row. */
 export interface SearchHit {
@@ -17,6 +17,11 @@ export interface SearchHit {
   isLimitedUse: boolean;
   inLcaCategory: boolean;
   inRdpCategory: boolean;
+  /** Inline-listing price summary (precomputed at pipeline time). null
+   *  when no plan has a positive displayPrice — the row renders a
+   *  "not covered" tag in that case. See pipeline/helpers.ts:
+   *  computePriceSummary for the fields. */
+  priceSummary: PriceSummary | null;
 }
 
 interface SearchState {
@@ -142,6 +147,9 @@ export async function search(query: string, opts?: { limit?: number; canonicalDo
       isLimitedUse: c?.isLimitedUse ?? false,
       inLcaCategory: c?.inLcaCategory ?? false,
       inRdpCategory: c?.inRdpCategory ?? false,
+      // Ids not present in companion (shouldn't happen — every drug gets
+      // a companion row) get a null summary and render as "not covered".
+      priceSummary: c?.priceSummary ?? null,
     };
   });
   if (canonicalFilter) {

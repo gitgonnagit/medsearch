@@ -1,4 +1,6 @@
-import type { CanonicalDosageForm } from './helpers.js';
+import type { CanonicalDosageForm, PriceSummary } from './helpers.js';
+
+export type { PriceSummary };
 
 /**
  * Shared types between the data pipeline and the frontend.
@@ -119,6 +121,12 @@ export interface SearchCompanionRow {
   isLimitedUse: boolean;
   inLcaCategory: boolean;
   inRdpCategory: boolean;
+  /** Precomputed currency-on-the-row summary: total cost per fill at the
+   *  cheapest plan, the patient's 30% Fair-PharmaCare share, and the
+   *  list of plans where the drug is fully covered automatically (no SA).
+   *  null when no plan has a positive displayPrice — the row will then
+   *  render "not covered" styling instead of a price block. */
+  priceSummary: PriceSummary | null;
 }
 
 /** Site metadata emitted with each pipeline run. */

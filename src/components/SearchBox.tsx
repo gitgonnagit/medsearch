@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { debounce, listCanonicalDosageForms, search, type SearchHit } from '@/lib/search-client';
+import type { PriceSummary } from '@pipeline/types';
 
 /**
  * Search box with live results and a dosage-form filter chip strip.
@@ -153,8 +154,58 @@ export default function SearchBox() {
                   {h.inRdpCategory && <span className="badge badge--rdp">RDP</span>}
                 </div>
               ) : null}
+              {h.priceSummary ? (
+                <PriceBlock s={h.priceSummary} />
+              ) : (
+                <div className="result__not-covered">This drug is not covered</div>
+              )}
             </Link>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Inline price/coverage block for a single search-result row.
+ *
+ * Layout mirrors drugsearch.ca's listing rows ("TOTAL COST: $X.XX for Y
+ * NOUN", "PATIENTS UNDER FAIR PHARMACARE: $X.XX", "FULLY COVERED for
+ * patients registered under plans X,Y") so users moving between the
+ * two tools see the same numbers in the same place. Restrained:
+ * small font, single-line rows, no card chrome — the row's existing
+ * `.result` link styling already supplies the visual grouping, so
+ * adding a background/border here would just look like clutter.
+ *
+ * The three lines are independent: a drug may be uncovered-but-LCA,
+ * covered-but-not-under-Fair-PharmaCare, or partially covered. We
+ * always render the first two; the third ("FULLY COVERED for plans
+ * X,Y") only fires when at least one plan is a non-SA Covered plan
+ * with a positive price.
+ */
+function PriceBlock({ s }: { s: PriceSummary }) {
+  return (
+    <div className="result__cost">
+      <div className="result__cost-row">
+        <span className="result__cost-label">TOTAL COST:</span>
+        <span>
+          <span className="result__cost-amount">${s.totalCost.toFixed(2)}</span>{' '}
+          for {s.refFillUnits} {s.refFillNoun}
+        </span>
+      </div>
+      <div className="result__cost-row">
+        <span className="result__cost-label">PATIENTS UNDER FAIR PHARMACARE:</span>
+        <span>
+          <span className="result__cost-amount">${s.patientCost.toFixed(2)}</span>
+        </span>
+      </div>
+      {s.fullyCoveredPlans.length > 0 && (
+        <div className="result__cost-row">
+          <span className="result__cost-label result__cost-label--covered">
+            FULLY COVERED
+          </span>
+          <span>for patients registered under plans {s.fullyCoveredPlans.join(',')}</span>
         </div>
       )}
     </div>

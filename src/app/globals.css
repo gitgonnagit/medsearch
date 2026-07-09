@@ -395,6 +395,59 @@ code {
   gap: 6px;
 }
 
+/* Inline-listing price block. Sits under badges in a `.result` row; the
+ * row's existing flex/hairline border already supplies grouping, so the
+ * block itself just needs restrained spacing and a tabular numeric font
+ * for the dollar figures. Reference: drugsearch.ca listing rows
+ * ("TOTAL COST: $X.XX for Y TABLETS", "PATIENTS UNDER FAIR PHARMACARE:
+ * $X.XX", "FULLY COVERED for plans X,Y"). */
+.result__cost {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--sp-xs);
+  font-size: var(--fs-small);
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.result__cost-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.result__cost-label {
+  font-weight: 600;
+  color: var(--color-text);
+  /* `tabular-nums` keeps the column aligned across rows even when
+     amounts differ — e.g. "$5.54" and "$217.31" line up the decimal. */
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.result__cost-label--covered {
+  color: var(--color-success);
+}
+
+.result__cost-amount {
+  font-weight: 600;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+  /* Slightly negative tracking so dollar signs hug the number; baseline-
+     aligned with the label so mixed long/short amounts render cleanly. */
+  letter-spacing: -0.005em;
+}
+
+/* "Not covered" line for drugs whose every plan has displayPrice = null. */
+.result__not-covered {
+  margin-top: var(--sp-xs);
+  font-size: var(--fs-small);
+  color: var(--color-warn);
+  font-weight: 500;
+}
+
 /* Badges */
 
 .badge {

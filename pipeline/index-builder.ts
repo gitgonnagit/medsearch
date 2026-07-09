@@ -9,7 +9,7 @@
 import MiniSearch from 'minisearch';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { CANONICAL_DOSAGE_FORMS } from './helpers.js';
+import { CANONICAL_DOSAGE_FORMS, computePriceSummary } from './helpers.js';
 import type { Drug, SearchCompanionRow, SiteMeta } from './types.js';
 
 export interface IndexBuildResult {
@@ -59,6 +59,12 @@ export async function buildSearchIndex(
     isLimitedUse: d.isLimitedUse,
     inLcaCategory: d.inLcaCategory || d.lcaCategory != null,
     inRdpCategory: d.inRdpCategory || d.rdpCategory != null,
+    // Precomputed once at pipeline time (~30-50 B/drug × ~16K drugs ≈
+    // ~600 KB added to companion.json) so the listing row renders with
+    // no per-keystroke cost math. Returns null when no plan has a
+    // positive displayPrice; the row then shows a "not covered" tag
+    // instead of the price block.
+    priceSummary: computePriceSummary(d.plans, d.dosageForm, d.canonicalDosageForm),
   }));
 
   const meta: SiteMeta = {
