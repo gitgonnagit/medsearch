@@ -170,19 +170,28 @@ export default function SearchBox() {
 /**
  * Inline price/coverage block for a single search-result row.
  *
- * Layout mirrors drugsearch.ca's listing rows ("TOTAL COST: $X.XX for Y
- * NOUN", "PATIENTS UNDER FAIR PHARMACARE: $X.XX", "FULLY COVERED for
- * patients registered under plans X,Y") so users moving between the
- * two tools see the same numbers in the same place. Restrained:
- * small font, single-line rows, no card chrome — the row's existing
- * `.result` link styling already supplies the visual grouping, so
- * adding a background/border here would just look like clutter.
+ * Layout mirrors drugsearch.ca's listing rows (see reference screenshot
+ * from user) so users moving between the two tools see the same numbers
+ * in the same place. The structure is:
  *
- * The three lines are independent: a drug may be uncovered-but-LCA,
- * covered-but-not-under-Fair-PharmaCare, or partially covered. We
- * always render the first two; the third ("FULLY COVERED for plans
- * X,Y") only fires when at least one plan is a non-SA Covered plan
- * with a positive price.
+ *   TOTAL COST: $X.XX for Y TABLETS
+ *   PATIENTS UNDER FAIR PHARMACARE:
+ *     AFTER Deductible reached: $X.XX
+ *     AFTER Family Max reached: $0.00
+ *   FULLY COVERED for patients registered under plans C,B,W,F
+ *
+ * The first two lines always render (cost / patient share math applies
+ * to every drug with a unit price). The third block — the
+ * deductible/family-max breakdown — is indented to make the
+ * conditional structure obvious. The final line either advertises
+ * plans where the drug is automatically free (B/C/F/W enrollees, who
+ * pay $0 out of pocket) or tells the user "This drug is not covered"
+ * if there are no such plans.
+ *
+ * Restrained visual treatment: the row's existing `.result` border +
+ * flex layout already supplies grouping, so the price block itself
+ * stays borderless and uses the same small/spacing tokens as the rest
+ * of the row.
  */
 function PriceBlock({ s }: { s: PriceSummary }) {
   return (
@@ -194,18 +203,25 @@ function PriceBlock({ s }: { s: PriceSummary }) {
           for {s.refFillUnits} {s.refFillNoun}
         </span>
       </div>
-      <div className="result__cost-row">
+      <div className="result__cost-row result__cost-row--header">
         <span className="result__cost-label">PATIENTS UNDER FAIR PHARMACARE:</span>
-        <span>
-          <span className="result__cost-amount">${s.patientCost.toFixed(2)}</span>
-        </span>
       </div>
-      {s.fullyCoveredPlans.length > 0 && (
-        <div className="result__cost-row">
-          <span className="result__cost-label result__cost-label--covered">
-            FULLY COVERED
-          </span>
+      <div className="result__cost-row result__cost-row--indent">
+        <span className="result__cost-label">AFTER Deductible reached:</span>
+        <span className="result__cost-amount">${s.patientShareAfterDeductible.toFixed(2)}</span>
+      </div>
+      <div className="result__cost-row result__cost-row--indent">
+        <span className="result__cost-label">AFTER Family Max reached:</span>
+        <span className="result__cost-amount">${s.familyMaxShare.toFixed(2)}</span>
+      </div>
+      {s.fullyCoveredPlans.length > 0 ? (
+        <div className="result__cost-row result__cost-row--header">
+          <span className="result__cost-label result__cost-label--covered">FULLY COVERED</span>
           <span>for patients registered under plans {s.fullyCoveredPlans.join(',')}</span>
+        </div>
+      ) : (
+        <div className="result__cost-row result__cost-row--not-covered">
+          <span>This drug is not covered</span>
         </div>
       )}
     </div>

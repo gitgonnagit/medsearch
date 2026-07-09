@@ -102,7 +102,26 @@ export function yn(v: unknown): boolean {
   return s === 'Y';
 }
 
-/** Coverage label and display price computation, given plan-level fields. */
+/** True if `v` is null, undefined, or the number 0 — the BC PharmaCare
+ *  PDDF source ships literal `0000.0000` for rdpPrice / lcaPrice / maxPrice
+ *  to mean "no price", and `parseNum` returns the number `0` for that
+ *  input rather than `null`. Without this pattern, code reading
+ *  `displayPrice != null` happily accepts 0 as a real unit price and
+ *  then the listing row's `Cheapest source plan` math downstream
+ *  surfaces garbage ($0 * 90 = $0 / fill) that suppresses the row's
+ *  price block. Same pattern already applied to `computeCostBreakdown`'s
+ *  `unitsPerDayFor` — kept consistent across the layer. */
+export function hasPositivePrice(v: number | null | undefined): v is number {
+  return v != null && Number.isFinite(v) && v > 0;
+}
+
+/** Coverage label and display price computation, given plan-level fields.
+ *  All four price-source branches reject literal-zero PDDF values via
+ *  `hasPositivePrice` — see the function above for why. Drugs whose
+ *  rdpPrice / lcaPrice / maxPrice all recognise as "missing" end up
+ *  with `Not covered` instead of a misleading `Covered, displayPrice=0`,
+ *  which previously caused listings like metformin XR / ER to silently
+ *  show "This drug is not covered" with no price block at all. */
 export function derivePlanCoverage(input: {
   isLimitedUse: boolean;
   lcaInd: boolean;
@@ -115,9 +134,18 @@ export function derivePlanCoverage(input: {
   planDescription: string | null;
 }): { label: PlanCoverage['coverageLabel']; displayPrice: number | null } {
   // If special authority is required, mark Limited Use regardless of price.
+  // Walk rdpPrice → maxPrice, treating literal 0 the same as missing so a
+  // legacy row whose `maxPrice` field is `0004.0025` but whose RDP price
+  // shipped as `0000.0000` falls through to the real maxPrice cleanly.
   if (input.isLimitedUse) {
-    const price = input.rdpPrice ?? input.maxPrice ?? null;
-    return { label: 'Limited Use', displayPrice: price };
+    const price = hasPositivePrice(input.rdpPrice)
+      ? input.rdpPrice
+      : hasPositivePrice(input.maxPrice)
+        ? input.maxPrice
+        : null;
+    return price == null
+      ? { label: 'Not covered', displayPrice: null }
+      : { label: 'Limited Use', displayPrice: price };
   }
   // If the drug is in an RDP category and this plan isn't excluded, RDP price applies.
   const isRdpExcludedFromThisPlan =
@@ -127,14 +155,18 @@ export function derivePlanCoverage(input: {
       .split(',')
       .map((p) => p.trim().toUpperCase())
       .includes(input.plan.toUpperCase());
-  if (input.rdpCategory && input.rdpPrice != null && !isRdpExcludedFromThisPlan) {
+  if (
+    !!input.rdpCategory &&
+    hasPositivePrice(input.rdpPrice) &&
+    !isRdpExcludedFromThisPlan
+  ) {
     return { label: 'Covered', displayPrice: input.rdpPrice };
   }
   // LCA: lowest LCA price in category applies.
-  if (input.lcaInd && input.lcaPrice != null) {
+  if (input.lcaInd && hasPositivePrice(input.lcaPrice)) {
     return { label: 'Covered', displayPrice: input.lcaPrice };
   }
-  if (input.maxPrice != null) {
+  if (hasPositivePrice(input.maxPrice)) {
     return { label: 'Covered', displayPrice: input.maxPrice };
   }
   return { label: 'Not covered', displayPrice: null };
@@ -242,6 +274,14 @@ export function canonicalizeDosageForm(raw: string | null): CanonicalDosageForm 
   return null;
 }
 
+/** The Fair-PharmaCare plan code. FPC enrollees pay via the stepped
+ *  deductible + 30% coinsurance + family-max structure rather than
+ *  receiving the drug at $0 — so listing it under `fullyCoveredPlans`
+ *  (where every other entry there is a $0 patient cost) would
+ *  misrepresent FPC's coverage. Excluded from `fullyCoveredPlans` in
+ *  `computePriceSummary` below. */
+export const FAIR_PHARMACARE_PLAN = 'I';
+
 /** Inline-listing-level price summary. Smaller than CostBreakdown —
  *  just enough for the per-row display on the search home page. All
  *  fields are nullable; when every plan has zero/null displayPrice
@@ -259,12 +299,25 @@ export interface PriceSummary {
   refFillNoun: string;
   /** Pre-fee, pre-share total cost: cheapest plan's unit price × refFillUnits. */
   totalCost: number;
-  /** Post-deductible patient share (30% of total), matching the
-   *  Fair-PharmaCare mental model used on the detail page's callout. */
+  /** Post-deductible Fair-PharmaCare patient share (30% of total),
+   *  matching the user's mental model of "70% / 30%" stepped plan. */
   patientCost: number;
-  /** PharmaCare plan codes where this drug is fully covered (label=Covered,
-   *  positive displayPrice). Limited Use plans are excluded — those drugs
-   *  require Special Authority first, so they don't auto-reimburse. */
+  /** Same dollar amount as `patientCost`, surfaced under the listing
+   *  row's "AFTER Deductible reached:" line. Kept redundant so the
+   *  frontend doesn't have to translate "what patients pay after the
+   *  FPC deductible" into prose in two different places. */
+  patientShareAfterDeductible: number;
+  /** Family-maximum stage of Fair-PharmaCare: once a family has paid
+   *  up to its annual family maximum, PharmaCare covers 100% of
+   *  eligible costs — patient share drops to $0.00 for the rest of
+   *  the year. Constant 0 for now (we don't model per-drug copays
+   *  or per-plan carve-outs). */
+  familyMaxShare: number;
+  /** PharmaCare plan codes where the drug is automatically fully
+   *  covered at $0 patient cost (label=Covered, positive displayPrice,
+   *  and NOT plan "I" Fair-PharmaCare). Limited Use plans (SA
+   *  required) are also excluded since they don't auto-reimburse —
+   *  the row falls back to "This drug is not covered" in that case. */
   fullyCoveredPlans: string[];
 }
 
@@ -356,8 +409,21 @@ export function computePriceSummary(
   const totalCost = unitPrice * refFillUnits;
   const patientCost = totalCost * PATIENT_SHARE;
 
+  // Listing-level coverage distinction: a drug can have a positive
+  // displayPrice via the cheapest plan (used for the FPC math above)
+  // yet have ZERO plans where enrollees pay $0. The "FULLY COVERED
+  // for plans X,Y" line on the reference site is for the second
+  // category only — B/C/F/W/etc. enrollees. FPC enrollees (plan I)
+  // go through the deductible / 30% / family-max structure spelled
+  // out below the row instead. Limited Use plans (SA-required) are
+  // also excluded — they don't auto-reimburse.
   const fullyCoveredPlans = plans
-    .filter((p) => p.coverageLabel === 'Covered' && p.displayPrice != null && p.displayPrice > 0)
+    .filter(
+      (p) =>
+        p.coverageLabel === 'Covered' &&
+        hasPositivePrice(p.displayPrice) &&
+        p.plan !== FAIR_PHARMACARE_PLAN,
+    )
     .map((p) => p.plan)
     .sort();
 
@@ -366,6 +432,8 @@ export function computePriceSummary(
     refFillNoun: refFillNounFor(dosageForm, canonical),
     totalCost,
     patientCost,
+    patientShareAfterDeductible: patientCost,
+    familyMaxShare: 0,
     fullyCoveredPlans,
   };
 }

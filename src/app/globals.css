@@ -440,7 +440,34 @@ code {
   letter-spacing: -0.005em;
 }
 
-/* "Not covered" line for drugs whose every plan has displayPrice = null. */
+/* Indent rows live under a step header ("PATIENTS UNDER FAIR
+ * PHARMACARE:") and need a small left-shift so they read as nested.
+ * Nudges the dollar amount to align under the parent amount column
+ * rather than under its own label. */
+.result__cost-row--indent {
+  padding-left: 1.25rem;
+}
+
+.result__cost-row--header {
+  /* Slight vertical breathing room to separate sections of the price
+   * block; kept tiny so the overall block still reads as one unit. */
+  margin-top: 2px;
+}
+
+/* "This drug is not covered" line: muted, no chrome — same tone as
+ * the row's existing tagline so the eye reads the price block as one
+ * unit even when the coverage line is a downgrade statement. */
+.result__cost-row--not-covered {
+  padding-left: 1.25rem;
+  font-size: var(--fs-small);
+  color: var(--color-warn);
+  font-style: italic;
+}
+
+/* The `.result__not-covered` standalone line still applies to drugs
+ * whose every plan has displayPrice = 0 / null (no price block at
+ * all, just the warning). Kept for back-compat with the orphan
+ * rendering path. */
 .result__not-covered {
   margin-top: var(--sp-xs);
   font-size: var(--fs-small);
@@ -734,28 +761,35 @@ code {
   gap: var(--sp-md);
 }
 
-/* Each pane is its own self-contained card. Color-coded so users can
- * tell at a glance which scenario the figures describe without
- * re-reading the header. No-coverage uses the existing warn-soft
- * (amber) token already used by the search-result "not covered" tag;
- * Fair-PharmaCare uses success-soft (green). */
+/* Each pane is its own self-contained card. Marked by a thin tinted
+ * border + a small badge, NOT a saturated background fill, so the
+ * page stays in the calm homepage register and the color doesn't
+ * compete with the drug title above. No-coverage uses the existing
+ * warn token already used by the search-result "not covered" tag;
+ * Fair-PharmaCare uses success token. */
 .cost-callout__pane {
   padding: var(--sp-lg);
   border-radius: var(--r-lg);
   display: flex;
   flex-direction: column;
   gap: var(--sp-sm);
-  border: 1px solid transparent;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
 }
 
 .cost-callout__pane--no-coverage {
-  background: var(--color-warn-soft);
-  border-color: rgba(146, 64, 14, 0.18);
+  border-color: rgba(146, 64, 14, 0.25);
+  /* Thin tinted strip at the top so the pane reads as a single
+   * self-contained card rather than relying on a saturated fill.
+   * `border-top` follows the pane's `border-radius` cleanly; an
+   * `inset box-shadow` would be clipped at the rounded corners and
+   * show as a stepped "tab + corner" instead of a continuous strip. */
+  border-top: 3px solid var(--color-warn);
 }
 
 .cost-callout__pane--fair-pharmacare {
-  background: var(--color-success-soft);
-  border-color: rgba(22, 101, 52, 0.18);
+  border-color: rgba(22, 101, 52, 0.25);
+  border-top: 3px solid var(--color-success);
 }
 
 .cost-callout__pane-header {
