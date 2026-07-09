@@ -241,13 +241,21 @@ function renderPriceCallout(d: Drug): string {
 const fmtCurrency = (n: number): string => `$${n.toFixed(2)}`;
 
 /**
- * Top-of-page "Patient Pays" panel. The user-facing headline is the
- * patient share (30% post-deductible) for the cheapest daily cost across
- * the drug's active plans: monthly + 3-month totals. Beneath the headline
- * we surface the source plan + unit math, full-cost reference, and a
- * small disclosure when `maxDailyQty === 1` on a unit-dose form
- * (injection / patch / inhaler / vial / etc.) so users see "1 unit/day"
- * rather than a 30× implication.
+ * Top-of-page "Cost at the pharmacy" panel. Two panes:
+ *   1. **No PharmaCare coverage** — what patients pay out-of-pocket at
+ *      100% (drug cost + $11 dispensing fee).
+ *   2. **Fair PharmaCare** — what enrolled patients pay once their
+ *      family deductible is met (30% share of the same drug cost + fee).
+ *
+ * Both panes use the cheapest source plan's `displayPrice` so the math
+ * is internally consistent (the reference row below spells out which
+ * plan and which unit math the figures come from). Each pane carries
+ * its own "Includes $11 dispensing fee per fill" footnote so the fee
+ * is visible from a glance rather than hidden in fine print.
+ *
+ * The `unitDisclosure` (raw maxDailyQty === 1 + unit-dose form) is
+ * surfaced as a separate `.cost-callout__disclosure` line below the
+ * reference so users see "1 unit/day" rather than a 30× implication.
  */
 function renderCostCallout(d: Drug): string {
   const breakdown = computeCostBreakdown(d.plans, d.dosageForm);
@@ -256,23 +264,43 @@ function renderCostCallout(d: Drug): string {
     breakdown;
   return `
     <section class="cost-callout">
-      <div class="cost-callout__eyebrow">Patient pays (after deductible, 30% coverage)</div>
-      <div class="cost-callout__amounts">
-        <div class="cost-callout__row">
-          <span class="cost-callout__label">Monthly</span>
-          <span class="cost-callout__amount">${fmtCurrency(patientMonthly!)}</span>
+      <div class="cost-callout__eyebrow">Cost at the pharmacy</div>
+      <div class="cost-callout__panes">
+        <div class="cost-callout__pane cost-callout__pane--no-coverage">
+          <div class="cost-callout__pane-header">No PharmaCare coverage</div>
+          <div class="cost-callout__pane-sub">Patient pays 100%</div>
+          <div class="cost-callout__pane-amounts">
+            <div class="cost-callout__row">
+              <span class="cost-callout__label">Monthly</span>
+              <span class="cost-callout__amount">${fmtCurrency(fullMonthly!)}</span>
+            </div>
+            <div class="cost-callout__row">
+              <span class="cost-callout__label">3 Months</span>
+              <span class="cost-callout__amount">${fmtCurrency(fullThreeMonth!)}</span>
+            </div>
+          </div>
+          <div class="cost-callout__pane-note">Includes the $11 dispensing fee per fill.</div>
         </div>
-        <div class="cost-callout__row">
-          <span class="cost-callout__label">3 Months</span>
-          <span class="cost-callout__amount">${fmtCurrency(patientThreeMonth!)}</span>
+
+        <div class="cost-callout__pane cost-callout__pane--fair-pharmacare">
+          <div class="cost-callout__pane-header">Fair PharmaCare</div>
+          <div class="cost-callout__pane-sub">After deductible met, 30% share</div>
+          <div class="cost-callout__pane-amounts">
+            <div class="cost-callout__row">
+              <span class="cost-callout__label">Monthly</span>
+              <span class="cost-callout__amount">${fmtCurrency(patientMonthly!)}</span>
+            </div>
+            <div class="cost-callout__row">
+              <span class="cost-callout__label">3 Months</span>
+              <span class="cost-callout__amount">${fmtCurrency(patientThreeMonth!)}</span>
+            </div>
+          </div>
+          <div class="cost-callout__pane-note">Includes 30% of the $11 dispensing fee per fill.</div>
         </div>
       </div>
       <div class="cost-callout__reference">
         Cheapest source plan <strong>${source.plan}</strong>: ${fmtCurrency(source.unitPrice)} per unit
         × ${source.unitsPerDay} unit/day = ${fmtCurrency(source.costPerDay)} per day.
-        Reference full cost: ${fmtCurrency(fullMonthly!)} per month ($11 dispensing fee)
-        and ${fmtCurrency(fullThreeMonth!)} per 3 months; the 30% above is what the patient pays
-        once Fair PharmaCare's deductible is met.
       </div>${
         unitDisclosure
           ? `\n      <div class="cost-callout__disclosure">${esc(unitDisclosure)}</div>`
