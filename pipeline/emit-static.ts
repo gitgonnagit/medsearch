@@ -28,7 +28,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Drug, PlanCoverage, SiteMeta } from './types.js';
-import { computeCostBreakdown } from './helpers.js';
+import { computeCostBreakdown, cleanedMoleculeName } from './helpers.js';
 
 const DATA_DIR = process.env.MEDSEARCH_DATA_DIR ?? './data-cache';
 const STATIC_OUT_DIR = process.env.MEDSEARCH_STATIC_OUT_DIR ?? './out-static';
@@ -309,58 +309,271 @@ function renderCostCallout(d: Drug): string {
     </section>`;
 }
 
-function renderRelatedDrugs(d: Drug, allDrugs: Drug[]): string {
-  // Compute "related" drugs inline from the canonical list (instead of reading
-  // a separate sidecar) so the emitter is the source of truth here.
-  if (allDrugs.length === 0 || !d.genericGroupKey) return '';
-  // Sort the matching set so the visible N (where N = MAX_RELATED_DRUGS)
-  // are the most variationally different — not just the first N by
-  // parse.ts's alphabetical genericName encounter order, which is
-  // arbitrary within a same-generic bucket and unhelpful when a
-  // bucket spans several thousand rows (e.g. the "unknown generic drug"
-  // placeholder group). Comparator falls through to brandName for the
-  // common case where strength is null (covered by parse.ts's known
-  // limitation); a future change that populates `strength` will get the
-  // deterministic strength-driven order for free.
-  const allMatching = allDrugs
-    .filter((x) => x.genericGroupKey === d.genericGroupKey && x.id !== d.id)
-    .sort((a, b) => {
-      const s = (a.strength ?? '').localeCompare(b.strength ?? '');
-      if (s !== 0) return s;
-      return (a.brandName ?? '').localeCompare(b.brandName ?? '');
-    });
-  if (allMatching.length === 0) return '';
-  // Cap rendered rows; the rest get a (showing N of M) hint in the heading.
-  // See MAX_RELATED_DRUGS above for the size-bound rationale.
-  const related = allMatching.slice(0, MAX_RELATED_DRUGS);
-  const truncated = allMatching.length > related.length;
+/**
+ * Visual classifier for one drug's role within the "Other drugs with
+ * the same generic name" section. The user's mental model collapses
+ * all branded-generics (Apo-Atorvastatin, Teva-Atorvastatin, …) under
+ * one "generic" identifier per strength; brand-name products
+ * (Lipitor, Crestor) keep their own identifier per strength.
+ *
+ *  - kind = "generic": brandName is null OR brandName (cleaned) equals
+ *                     / contains the cleaned molecule base. Apo-, Teva-
+ *                     Atorvastatin still share the molecule "atorvastatin".
+ *  - kind = "brand":  brandName is set and is something other than the
+ *                     molecule base.
+ *
+ * The cleaned molecule base is computed in pipeline/helpers.ts so the
+ * dedup pass here stays in lock-step with `genericGroupKey`'s.
+ */
+interface RelatedClass {
+  kind: 'generic' | 'brand';
+  /** Stable, lowercased, used as part of the dedup key for cards. */
+  identifier: string;
+  /** Display form (title-cased) used in card titles. */
+  displayIdentifier: string;
+}
 
-  const rows = related
-    .map((r) => {
-      const brandLine = r.brandName
-        ? `<span class="result__brand">${esc(r.brandName)}</span><span class="result__generic">&mdash; ${esc(r.genericName)}</span>`
-        : `<span class="result__brand">${esc(r.genericName)}</span>`;
-      const meta: string[] = [`<span>DIN/PIN: <span class="text-mono">${esc(r.id)}</span></span>`];
-      if (r.dosageForm) meta.push(`<span>${esc(r.dosageForm)}</span>`);
-      if (r.manufacturer) meta.push(`<span>${esc(r.manufacturer)}</span>`);
-      // Note: same basePath normalisation as the per-drug link below.
-      return `<a href="${BASE_PATH}/drug/${encodeURIComponent(r.id)}/" class="result">
-  <div class="result__title">${brandLine}</div>
-  <div class="result__meta">
-    ${meta.join('\n    ')}
-  </div>
+function classifyRelated(d: Drug): RelatedClass {
+  const baseLc = cleanedMoleculeName(d.genericName);
+  const brandLc = (d.brandName ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const brandedGeneric =
+    !!brandLc &&
+    (brandLc === baseLc || (baseLc.length >= 6 && brandLc.includes(baseLc)));
+  if (!brandLc || brandedGeneric) {
+    return {
+      kind: 'generic',
+      identifier: baseLc,
+      displayIdentifier: titleCase(baseLc),
+    };
+  }
+  return {
+    kind: 'brand',
+    identifier: brandLc,
+    displayIdentifier: titleCase(d.brandName!),
+  };
+}
+
+/** Title-case lowercase strings, breaking at whitespace / hyphens /
+ *  apostrophes so "apo-atorvastatin" → "Apo-Atorvastatin", "lipitor"
+ *  → "Lipitor". */
+function titleCase(s: string): string {
+  return s.toLowerCase().replace(/(^|[\s\-'])[a-z]/g, (m) => m.toUpperCase());
+}
+
+/** Effective strength for grouping: `drug.strength` from the parsed
+ *  record when populated, otherwise extracted from the raw
+ *  `genericName` string. The BC PharmaCare PDDF does not surface
+ *  strength as a dedicated column, so `parse.ts` deliberately leaves
+ *  `drug.strength` null and embeds the strength inside `genericName`
+ *  (e.g. "ATORVASTATIN CALCIUM 10 MG TA"). Without this fallback the
+ *  dedup key in `renderRelatedDrugs` is silent on strength and every
+ *  dose variant of the same generic collapses into a single card —
+ *  undoing the user's explicit "different generic strengths" ask.
+ *  Uses the same strength-token regex pattern as helpers.STRENGTH_TOKEN
+ *  inlined here, so the emitter stays self-contained on dedup
+ *  decisions. */
+function effectiveStrength(d: Drug): string | null {
+  if (d.strength) return d.strength;
+  // Strengths can be plain oral doses ("10 mg"), concentration-time
+  // ("5 mg/ml"), or weight-adjusted ("5 mg/kg"). Keep the per-mL /
+  // per-kg tail attached so liquid-strength card titles don't render
+  // with a trailing "/" (the previous regex stopped at the slash,
+  // capturing "10 mg/" from "10 mg/ml" and surfacing "Atorvastatin
+  // 10 mg/" — ugly).
+  const m = /\b(\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|ml|mL|iu|%|u|units?|mmol)(?:\/(?:ml|mL|ML|kg|m\^?2))?)\b/i.exec(d.genericName);
+  if (!m) return null;
+  return m[1].trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Strength ordering key: extract leading numeric portion so "10 mg",
+ *  "20 mg", "100 mg" sort by magnitude instead of lexicographically
+ *  (which would order "10 mg" after "100 mg"). Non-numeric strengths
+ *  sort to the tail so they don't pre-empt the dominant numeric set. */
+function strengthOrderKey(s: string | null): number {
+  if (!s) return Number.POSITIVE_INFINITY;
+  const m = /^(\d+(?:\.\d+)?)/.exec(s.trim());
+  return m ? parseFloat(m[1]) : Number.POSITIVE_INFINITY;
+}
+
+/** Single card in the related-list grid. Each card aggregates ≥1
+ *  DIN sharing (kind, identifier, strength, dosageForm). */
+interface RelatedCard {
+  kind: 'generic' | 'brand';
+  identifier: string;
+  displayIdentifier: string;
+  strength: string | null;
+  dosageForm: string | null;
+  dins: Drug[];
+  representativeDin: Drug;
+  coverageKind: 'Covered' | 'Limited Use' | 'Not covered';
+  count: number;
+}
+
+/** Pick a click-through representative DIN per card: cheapest
+ *  (displayPrice × maxDailyQty) across plans whose status indicates
+ *  actual coverage ("Covered" or "Limited Use"), fallback to smallest
+ *  DIN id lexically. Avoids landing on an obscure high-priced DIN
+ *  when several are available in the same strength bucket, and
+ *  avoids picking a Not-covered row whose displayPrice happens to
+ *  be positive (shouldn't happen post-literal-zero fix, but defensive
+ *  — `computePriceSummary` filters on label so we mirror that here). */
+function pickRepresentativeDin(
+  drugs: Drug[],
+  coverageKind: 'Covered' | 'Limited Use' | 'Not covered',
+): Drug {
+  // Per the reviewer flag: a card whose badge says "Covered" must not
+  // link into a Limited-Use-only DIN — UX mismatch. Two-pass picker:
+  //   Pass 1 — cheapest DIN whose cheapest positive-price plan's
+  //            coverageLabel matches the card's coverageKind.
+  //   Pass 2 — cheapest positive-price DIN with any non-Not-covered
+  //            label, if pass 1 found nothing.
+  //   Pass 3 — smallest DIN id lexically, defensive fallback.
+  const cheapestOf = (kind: PlanCoverage['coverageLabel'] | 'any'): Drug | null => {
+    let best: { d: Drug; cost: number } | null = null;
+    for (const d of drugs) {
+      for (const p of d.plans) {
+        if (p.displayPrice == null || p.displayPrice <= 0) continue;
+        if (kind !== 'any' && p.coverageLabel !== kind) continue;
+        if (kind === 'any' && p.coverageLabel === 'Not covered') continue;
+        const units = p.maxDailyQty != null && p.maxDailyQty > 0 ? p.maxDailyQty : 1;
+        const cost = p.displayPrice * units;
+        if (!best || cost < best.cost) best = { d, cost };
+      }
+    }
+    return best ? best.d : null;
+  };
+
+  // Pass 1: strict match for positive-coverage states only.
+  if (coverageKind === 'Covered' || coverageKind === 'Limited Use') {
+    const strict = cheapestOf(coverageKind);
+    if (strict) return strict;
+  }
+  // Pass 2: any non-Not-covered positive-price plan.
+  const any = cheapestOf('any');
+  if (any) return any;
+  // Pass 3: smallest DIN id lexically.
+  return [...drugs].sort((a, b) => a.id.localeCompare(b.id))[0];
+}
+
+/** Derive a card-level coverage badge from the union of underlying
+ *  DINs' plan rows. "Covered" wins if any plan row is Covered;
+ *  "Limited Use" wins if any is Limited Use and no Covered; else
+ *  "Not covered". This is the user's "indicate that generic
+ *  atorvastatin is covered" surface — a single badge per card
+ *  rather than a per-DIN plan table. */
+function coverageKindOf(drugs: Drug[]): 'Covered' | 'Limited Use' | 'Not covered' {
+  let seenCovered = false;
+  let seenLimited = false;
+  for (const d of drugs) {
+    for (const p of d.plans) {
+      if (p.coverageLabel === 'Covered') seenCovered = true;
+      else if (p.coverageLabel === 'Limited Use') seenLimited = true;
+    }
+  }
+  if (seenCovered) return 'Covered';
+  if (seenLimited) return 'Limited Use';
+  return 'Not covered';
+}
+
+/** Sort cards: generics before brands (the user's mental flow —
+ *  "generic atorvastatin is covered", then "Lipitor follows as the
+ *  brand-name branch"), then ascending strength within each kind, then
+ *  alphabetical identifier as the deterministic tiebreaker. */
+function sortRelatedCards(a: RelatedCard, b: RelatedCard): number {
+  if (a.kind !== b.kind) return a.kind === 'generic' ? -1 : 1;
+  const sd = strengthOrderKey(a.strength) - strengthOrderKey(b.strength);
+  if (sd !== 0) return sd;
+  return a.identifier.localeCompare(b.identifier);
+}
+
+function renderRelatedCard(card: RelatedCard): string {
+  const covBadge =
+    card.coverageKind === 'Covered'
+      ? 'badge--covered'
+      : card.coverageKind === 'Limited Use'
+        ? 'badge--limited'
+        : 'badge--not-covered';
+  const title = `${card.displayIdentifier}${card.strength ? ' ' + card.strength.toLowerCase() : ''}`;
+  // Show the dosage form and the collapse count together so the
+  // collapsed-from-N-brands signal lands without a separate line.
+  // Single-DIN cards drop the count — the URL gives precise info
+  // when the user clicks through.
+  const formChunk = card.dosageForm ? esc(card.dosageForm) : '';
+  const countChunk =
+    card.count > 1
+      ? ` · ${card.count} ${card.kind === 'generic' ? 'generic alternatives' : 'brand-name DINs'}`
+      : '';
+  const formLine = formChunk || countChunk
+    ? `<div class="related-card__form">${formChunk}${countChunk}</div>`
+    : '';
+  return `<a href="${BASE_PATH}/drug/${encodeURIComponent(card.representativeDin.id)}/" class="related-card">
+  <div class="related-card__kind-row"><span class="badge badge--neutral">${card.kind === 'generic' ? 'Generic' : 'Brand'}</span></div>
+  <div class="related-card__title">${esc(title)}</div>
+  ${formLine}
+  <div class="related-card__meta"><span class="badge ${covBadge}">${esc(card.coverageKind)}</span></div>
 </a>`;
-    })
-    .join('\n');
+}
+
+function renderRelatedDrugs(d: Drug, allDrugs: Drug[]): string {
+  if (allDrugs.length === 0 || !d.genericGroupKey) return '';
+  const allMatching = allDrugs.filter(
+    (x) => x.genericGroupKey === d.genericGroupKey && x.id !== d.id,
+  );
+  if (allMatching.length === 0) return '';
+
+  // Collapse each drug into a card keyed by
+  // (kind, identifier, strength, dosageForm). Branded-generics (Apo-,
+  // Teva-, …) collapse into one "generic" card per strength;
+  // brand-name products each get their own card per strength.
+  // Strength comes from `effectiveStrength(r)` which falls back to
+  // extracting the strength token from `genericName` when parse.ts
+  // left `drug.strength` null — see the helper's comment for why.
+  const cards = new Map<string, RelatedCard>();
+  for (const r of allMatching) {
+    const cls = classifyRelated(r);
+    const s = effectiveStrength(r);
+    const strengthLc = (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const formLc = (r.dosageForm ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const key = `${cls.kind}|${cls.identifier}|${strengthLc}|${formLc}`;
+    let card = cards.get(key);
+    if (!card) {
+      card = {
+        kind: cls.kind,
+        identifier: cls.identifier,
+        displayIdentifier: cls.displayIdentifier,
+        strength: s,
+        dosageForm: r.dosageForm,
+        dins: [],
+        representativeDin: r,
+        coverageKind: 'Not covered',
+        count: 0,
+      };
+      cards.set(key, card);
+    }
+    card.dins.push(r);
+  }
+  for (const card of cards.values()) {
+    card.coverageKind = coverageKindOf(card.dins);
+    // Pass coverageKind so the click target represents the kind that
+    // matches the badge — see pickRepresentativeDin for why.
+    card.representativeDin = pickRepresentativeDin(card.dins, card.coverageKind);
+    card.count = card.dins.length;
+  }
+
+  const cardsArr = [...cards.values()].sort(sortRelatedCards);
+  const truncated = cardsArr.length > MAX_RELATED_DRUGS;
+  const visibleCards = truncated ? cardsArr.slice(0, MAX_RELATED_DRUGS) : cardsArr;
+
+  const cardsHtml = visibleCards.map(renderRelatedCard).join('\n');
 
   const suffix = truncated
-    ? ` <span class="text-muted text-small">(showing ${related.length} of ${allMatching.length})</span>`
+    ? ` <span class="text-muted text-small">(showing ${visibleCards.length} of ${cardsArr.length})</span>`
     : '';
 
   return `<section class="detail__section">
   <h2 class="detail__section-title">Other drugs with the same generic name${suffix}</h2>
   <div class="related-list">
-    ${rows}
+    ${cardsHtml}
   </div>
 </section>`;
 }

@@ -31,6 +31,18 @@ const SALT_SUFFIXES = [
 /** Strength token patterns (mg, mcg, %, etc.) used to strip strength from names. */
 const STRENGTH_TOKEN = /\b\d+(\.\d+)?\s*(mg|mcg|µg|g|ml|mL|iu|%|u|units?|mmol)\/?(kg|m\^?2)?\b/gi;
 
+/** Form / dosage-route token patterns (TA, TAB, CAP, INJECTION, ...) used
+ *  by `cleanedMoleculeName` to strip the raw form off the molecule base.
+ *  Without this pass, a Drug whose genericName is "ATORVASTATIN CALCIUM
+ *  10 MG TA" leaves the cleaned base as "atorvastatin calcium ta", and
+ *  the brand-vs-generic comparison `brandLc.includes(baseLc)` ("apo-
+ *  atorvastatin" includes "atorvastatin calcium ta"?) returns false —
+ *  misclassifying every branded-generic as its own brand card and
+ *  re-flattening the 60+ row surface the user complained about.
+ *  Mirrors `emit-static.ts`'s `genericStripped` form-token pass so the
+ *  two layers stay synchronised. */
+const FORM_TOKEN = /\b(TA|TAB|TABS|CAP|CAPS|ER|XR|SR|LA|CR|TABLET|TABLETS|CAPSULE|CAPSULES|TOPICAL|ORAL|INHALATION|INJECTION|SOLUTION|SUSPENSION|SYRUP|ELIXIR|TBMP\s*24HR|TABERGR24H)\b/gi;
+
 /** Parse a BC PharmaCare date string ("MM/DD/YYYY" or ISO). Returns YYYY-MM-DD or null. */
 export function parseDate(raw: unknown): string | null {
   if (raw == null) return null;
@@ -84,6 +96,30 @@ export function genericGroupKey(name: string, strength: string | null, dosageFor
   const formToken = (dosageForm || '').toLowerCase().replace(/\s+/g, ' ').trim();
   const strengthToken = (strength || '').toLowerCase().replace(/\s+/g, ' ').trim();
   return [base, formToken, strengthToken].filter(Boolean).join('|');
+}
+
+/**
+ * Strip PDDF generic-name chrome down to the molecule base — companion
+ * to {@link genericGroupKey} that doesn't fold in dosage form / strength.
+ * Used by `pipeline/emit-static.ts` to detect "branded-generics"
+ * (Apo-Atorvastatin, Teva-Atorvastatin, ...) which share a molecule
+ * base with the true generic. Without this dedup pass, the related-list
+ * section on the detail page would render one card per branded-generic
+ * DIN instead of one card per (molecule × strength).
+ */
+export function cleanedMoleculeName(genericName: string | null | undefined): string {
+  if (!genericName) return '';
+  let n = genericName.toLowerCase();
+  n = n
+    .replace(STRENGTH_TOKEN, '')
+    .replace(FORM_TOKEN, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const tokens = n.split(/[\s,]+/).filter(Boolean);
+  while (tokens.length > 0 && SALT_SUFFIXES.includes(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+  return tokens.join(' ').trim();
 }
 
 /** Light fuzzy normalization (lowercase, strip punctuation) for matching SA lists. */

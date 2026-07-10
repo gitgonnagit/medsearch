@@ -520,6 +520,17 @@ code {
   border-color: rgba(15, 118, 110, 0.18);
 }
 
+/* Neutral kind tags — applied to the "Generic" / "Brand" pills on the
+ * related-list cards. Intentionally muted so they don't compete with
+ * the colour-coded coverage badge stacked below (which carries the
+ * meaningful status). Kept separate from `.result__not-covered` etc.
+ * so this chrome stays visually distinct from the warning surface. */
+.badge--neutral {
+  background: var(--color-surface-soft);
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+}
+
 /* Detail page */
 
 .detail {
@@ -663,16 +674,84 @@ code {
   white-space: nowrap;
 }
 
-/* Related drugs list */
-
+/* Related drugs list — collapsed card grid. Each card represents
+ * one (kind × identifier × strength × dosageForm) bucket so that a
+ * single-generic molecule with 60+ branded-generic DINs renders as one
+ * "Atorvastatin 10 mg (Generic, Covered)" card instead of 60 flat rows
+ * that all repeat the same molecule string. Brand-name products
+ * (Lipitor, Crestor) keep their own cards, so the strength-by-strength
+ * comparison is one click away without scrolling through a maze.
+ * Reference: the previous flat layout in this file pre-2026-07. */
 .related-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  background: var(--color-surface);
+  display: grid;
+  /* `minmax(260px, 1fr)` keeps each card wide enough for a 3-line title
+   * without crowding the badge column on desktop. `auto-fill` lets
+   * small buckets collapse columns rather than stretch a single card
+   * across the full container. The mobile breakpoint below forces
+   * single-column on phones. */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  /* 1px gap with the container's border colour as the cells' grid-
+   * line gives a continuous hairline divider between cards without
+   * setting a side-border on each card. Border-radius clips at the
+   * outer corners only against the container. */
+  gap: 1px;
+  background: var(--color-border);
   border: 1px solid var(--color-border);
   border-radius: var(--r-md);
   overflow: hidden;
+}
+
+.related-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-xs);
+  padding: var(--sp-md) var(--sp-lg);
+  background: var(--color-surface);
+  text-decoration: none;
+  color: var(--color-text);
+  transition: background 100ms ease;
+}
+
+.related-card:hover,
+.related-card:focus-visible {
+  background: var(--color-surface-soft);
+  text-decoration: none;
+}
+
+/* Reserves a fixed-height row for the kind-tag ("Generic" / "Brand")
+ * so every card has the same vertical rhythm regardless of how long
+ * the title or sub-line runs. Without this, the badge column drifts
+ * when grid auto-fits >2 columns per row. */
+.related-card__kind-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 22px;
+}
+
+.related-card__title {
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.005em;
+  word-break: break-word;
+}
+
+.related-card__form {
+  font-size: var(--fs-small);
+  color: var(--color-text-muted);
+}
+
+.related-card__meta {
+  display: flex;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  align-items: center;
+  /* `margin-top: auto` glues the coverage badge to the bottom of each
+   * card so the badge column aligns across cards in the same row
+   * regardless of which card has the longer sub-line. Same micro-
+   * pattern as the cost callout panes. */
+  margin-top: auto;
 }
 
 /* About page */
@@ -725,6 +804,12 @@ code {
     grid-template-columns: 1fr;
   }
   .cost-callout__pane-amounts {
+    grid-template-columns: 1fr;
+  }
+  /* Related-list cards collapse to one column on phones so each title
+     line gets the full container width instead of being squeezed into
+     a 260px min column. */
+  .related-list {
     grid-template-columns: 1fr;
   }
 }
